@@ -137,34 +137,20 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"*": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
+	}
+}
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"havano_sync.tasks.all"
-# 	],
-# 	"daily": [
-# 		"havano_sync.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"havano_sync.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"havano_sync.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"havano_sync.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": [
+		"havano_sync.havano_sync.tasks.sync.sync_cron_job"
+	]
+}
 
 # Testing
 # -------

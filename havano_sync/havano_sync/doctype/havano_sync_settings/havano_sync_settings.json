@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-11-24 20:37:05.638680",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "instance_type",
+  "cloud_url",
+  "local_url",
+  "column_break_lgey",
+  "admin_api_secret",
+  "admin_api_key",
+  "section_break_hmdv",
+  "syncable_doctypes"
+ ],
+ "fields": [
+  {
+   "fieldname": "instance_type",
+   "fieldtype": "Select",
+   "label": "Instance Type",
+   "options": "Local\nCloud"
+  },
+  {
+   "fieldname": "column_break_lgey",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.instance_type == \"Local\"",
+   "fieldname": "cloud_url",
+   "fieldtype": "Data",
+   "label": "Cloud Url"
+  },
+  {
+   "depends_on": "eval:doc.instance_type == \"Cloud\"",
+   "fieldname": "local_url",
+   "fieldtype": "Data",
+   "label": "Local Url"
+  },
+  {
+   "fieldname": "section_break_hmdv",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "syncable_doctypes",
+   "fieldtype": "Table",
+   "label": "Syncable Doctypes",
+   "options": "Havano Syncable Doctypes"
+  },
+  {
+   "fieldname": "admin_api_key",
+   "fieldtype": "Data",
+   "label": "Admin Api Key"
+  },
+  {
+   "fieldname": "admin_api_secret",
+   "fieldtype": "Password",
+   "label": "Admin Api Secret"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-11-24 20:59:27.710646",
+ "modified_by": "Administrator",
+ "module": "Havano Sync",
+ "name": "Havano Sync Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

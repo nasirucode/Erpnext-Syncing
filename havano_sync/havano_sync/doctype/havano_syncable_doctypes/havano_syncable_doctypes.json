@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-11-24 20:43:51.085840",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "doctypes",
+  "column_break_hmlv",
+  "local",
+  "cloud"
+ ],
+ "fields": [
+  {
+   "fieldname": "doctypes",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Doctypes",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "column_break_hmlv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "local",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Local"
+  },
+  {
+   "default": "0",
+   "fieldname": "cloud",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Cloud"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-11-24 20:44:45.289007",
+ "modified_by": "Administrator",
+ "module": "Havano Sync",
+ "name": "Havano Syncable Doctypes",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
