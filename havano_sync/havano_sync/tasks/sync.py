@@ -4,7 +4,10 @@
 import frappe
 from frappe.utils import now, cint
 from havano_sync.havano_sync.utils.sync_api import SyncAPI
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+	from frappe.model.document import Document
 
 
 def get_sync_settings():
@@ -66,7 +69,7 @@ def get_sync_direction(doctype: str, settings) -> Optional[str]:
 	return None
 
 
-def prepare_doc_for_sync(doc: frappe.Document) -> Dict[str, Any]:
+def prepare_doc_for_sync(doc) -> Dict[str, Any]:
 	"""Prepare document data for syncing (remove internal fields)"""
 	doc_dict = doc.as_dict()
 	
@@ -169,7 +172,7 @@ def sync_document_to_remote(
 		}
 
 
-def sync_document_on_create(doc: frappe.Document, method: Optional[str] = None):
+def sync_document_on_create(doc, method: Optional[str] = None):
 	"""
 	Sync document when it's created
 	This is called via doc_events hook
