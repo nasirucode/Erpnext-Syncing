@@ -5,9 +5,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "instance_type",
-  "cloud_url",
-  "local_url",
+  "enable_sync",
+  "remote_url",
   "column_break_lgey",
   "admin_api_secret",
   "admin_api_key",
@@ -16,26 +15,32 @@
  ],
  "fields": [
   {
-   "fieldname": "instance_type",
-   "fieldtype": "Select",
-   "label": "Instance Type",
-   "options": "Local\nCloud"
+   "default": "0",
+   "fieldname": "enable_sync",
+   "fieldtype": "Check",
+   "label": "Enable Sync"
+  },
+  {
+   "fieldname": "remote_url",
+   "fieldtype": "Data",
+   "label": "Remote Server URL",
+   "reqd": 1
   },
   {
    "fieldname": "column_break_lgey",
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "eval:doc.instance_type == \"Local\"",
-   "fieldname": "cloud_url",
+   "fieldname": "admin_api_key",
    "fieldtype": "Data",
-   "label": "Cloud Url"
+   "label": "Admin Api Key",
+   "reqd": 1
   },
   {
-   "depends_on": "eval:doc.instance_type == \"Cloud\"",
-   "fieldname": "local_url",
-   "fieldtype": "Data",
-   "label": "Local Url"
+   "fieldname": "admin_api_secret",
+   "fieldtype": "Password",
+   "label": "Admin Api Secret",
+   "reqd": 1
   },
   {
    "fieldname": "section_break_hmdv",
@@ -46,23 +51,13 @@
    "fieldtype": "Table",
    "label": "Syncable Doctypes",
    "options": "Havano Syncable Doctypes"
-  },
-  {
-   "fieldname": "admin_api_key",
-   "fieldtype": "Data",
-   "label": "Admin Api Key"
-  },
-  {
-   "fieldname": "admin_api_secret",
-   "fieldtype": "Password",
-   "label": "Admin Api Secret"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-11-24 20:59:27.710646",
+ "modified": "2025-01-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Havano Sync",
  "name": "Havano Sync Settings",

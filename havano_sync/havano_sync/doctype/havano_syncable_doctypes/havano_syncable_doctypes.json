@@ -7,9 +7,9 @@
  "engine": "InnoDB",
  "field_order": [
   "doctypes",
-  "column_break_hmlv",
-  "local",
-  "cloud"
+  "column_break_1",
+  "send",
+  "fetch"
  ],
  "fields": [
   {
@@ -17,32 +17,33 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Doctypes",
-   "options": "DocType"
+   "options": "DocType",
+   "reqd": 1
   },
   {
-   "fieldname": "column_break_hmlv",
+   "fieldname": "column_break_1",
    "fieldtype": "Column Break"
   },
   {
-   "default": "0",
-   "fieldname": "local",
+   "default": "1",
+   "fieldname": "send",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Local"
+   "label": "Send to Remote"
   },
   {
-   "default": "0",
-   "fieldname": "cloud",
+   "default": "1",
+   "fieldname": "fetch",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Cloud"
+   "label": "Fetch from Remote"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-24 20:44:45.289007",
+ "modified": "2025-01-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Havano Sync",
  "name": "Havano Syncable Doctypes",

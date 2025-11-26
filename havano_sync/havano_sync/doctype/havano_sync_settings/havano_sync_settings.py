@@ -8,12 +8,8 @@ from havano_sync.havano_sync.utils.sync_api import SyncAPI
 
 class HavanoSyncSettings(Document):
 	def get_target_url(self):
-		"""Get the target URL based on instance type"""
-		if self.instance_type == "Local":
-			return self.cloud_url
-		elif self.instance_type == "Cloud":
-			return self.local_url
-		return None
+		"""Get the target URL (remote server URL)"""
+		return self.remote_url
 	
 	@frappe.whitelist()
 	def test_connection(self):
@@ -25,24 +21,35 @@ class HavanoSyncSettings(Document):
 					"message": "API Key and Secret must be configured"
 				}
 			
-			target_url = self.get_target_url()
-			if not target_url:
+			if not self.remote_url:
 				return {
 					"status": "error",
-					"message": "Target URL not configured. Please set Cloud URL (for Local instance) or Local URL (for Cloud instance)."
+					"message": "Remote Server URL must be configured"
 				}
 			
-			api_client = SyncAPI(target_url, self.admin_api_key, self.admin_api_secret)
-			if api_client.test_connection():
+			# Get decrypted API secret
+			from havano_sync.havano_sync.tasks.sync import get_decrypted_api_secret
+			api_secret = get_decrypted_api_secret(self)
+			
+			if not api_secret:
+				return {
+					"status": "error",
+					"message": "API Secret could not be decrypted. Please re-enter and save the API Secret."
+				}
+			
+			api_client = SyncAPI(self.remote_url, self.admin_api_key, api_secret)
+			success, error_message = api_client.test_connection()
+			
+			if success:
 				return {
 					"status": "success",
-					"message": f"Connection successful! Connected to {target_url}",
-					"target_url": target_url
+					"message": f"Connection successful! Connected to {self.remote_url}",
+					"target_url": self.remote_url
 				}
 			else:
 				return {
 					"status": "error",
-					"message": "Connection failed. Please check your URL, API Key, and API Secret."
+					"message": error_message or "Connection failed. Please check your URL, API Key, and API Secret."
 				}
 		
 		except Exception as e:

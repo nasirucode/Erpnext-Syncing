@@ -138,8 +138,21 @@ app_license = "mit"
 # Hook on document methods and events
 
 doc_events = {
-	"*": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
+	"Customer": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
+		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+	},
+	"Sales Invoice": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
+		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+	},
+	"Payment Entry": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
+		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+	},
+	"Sales Order": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
+		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
 	}
 }
 
@@ -149,7 +162,12 @@ doc_events = {
 scheduler_events = {
 	"hourly": [
 		"havano_sync.havano_sync.tasks.sync.sync_cron_job"
-	]
+	],
+	"cron": {
+		"*/15 * * * *": [
+			"havano_sync.havano_sync.tasks.sync.process_queue_cron_job"
+		]
+	}
 }
 
 # Testing
@@ -224,7 +242,7 @@ scheduler_events = {
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True
 
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
+default_log_clearing_doctypes = {
+	"Havano Sync Log": 30  # days to retain logs
+}
 
