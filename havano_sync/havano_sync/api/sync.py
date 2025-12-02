@@ -2,6 +2,8 @@
 # For license information, please see license.txt
 
 import frappe
+import json
+import requests
 from havano_sync.havano_sync.tasks.sync import (
 	sync_all_pending_documents,
 	sync_single_document,
@@ -142,6 +144,106 @@ def trigger_fetch_single(doctype: str, name: str):
 
 
 @frappe.whitelist()
+def get_remote_apps():
+	"""
+	API endpoint to get list of installed apps from remote server
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.get_remote_apps
+	"""
+	try:
+		settings = get_sync_settings()
+		
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return {
+				"status": "error",
+				"message": "Please configure Remote Server URL, Admin API Key, and Admin API Secret first."
+			}
+		
+		api_secret = get_decrypted_api_secret(settings)
+		if not api_secret:
+			return {
+				"status": "error",
+				"message": "Could not decrypt API Secret. Please re-enter and save the API Secret."
+			}
+		
+		# Create API client
+		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
+		
+		# Get installed apps from remote using frappe.utils.change_log.get_versions
+		# This is the same function that show_about() uses
+		try:
+			# Call frappe.utils.change_log.get_versions from remote server
+			endpoint = "frappe.utils.change_log.get_versions"
+			versions = api_client._make_request("GET", endpoint, params={})
+			
+			if versions and isinstance(versions, dict):
+				# Convert the versions dict to our apps list format
+				apps = []
+				for app_name, app_info in versions.items():
+					apps.append({
+						"app_name": app_name,
+						"app_version": app_info.get("version", ""),
+						"app_title": app_info.get("title", app_name),
+						"app_description": app_info.get("description", ""),
+						"branch": app_info.get("branch", ""),
+						"branch_version": app_info.get("branch_version", "")
+					})
+				
+				return {
+					"status": "success",
+					"apps": apps,
+					"count": len(apps),
+					"versions": versions  # Include full versions dict for compatibility
+				}
+			else:
+				return {
+					"status": "success",
+					"apps": [],
+					"count": 0,
+					"message": "No apps found on remote server."
+				}
+		except requests.exceptions.HTTPError as e:
+			if e.response and e.response.status_code == 403:
+				# Permission denied - provide helpful error message
+				frappe.log_error(
+					title="Permission denied getting remote apps",
+					message=f"403 Forbidden: API user does not have permission to access get_versions. Error: {str(e)}"
+				)
+				return {
+					"status": "error",
+					"message": "Permission denied: The API user does not have permission to access installed apps on the remote server. Please ensure the API user (associated with the Admin API Key) has the 'System Manager' role."
+				}
+			# For other HTTP errors, return error message
+			frappe.log_error(
+				title="Failed to get remote apps",
+				message=f"HTTP Error getting apps: {str(e)}"
+			)
+			return {
+				"status": "error",
+				"message": f"Failed to get apps from remote server: HTTP {e.response.status_code if e.response else 'unknown'} error. Please ensure the API user has proper permissions."
+			}
+		except Exception as e:
+			frappe.log_error(
+				title="Failed to get remote apps",
+				message=f"Error getting apps from remote: {str(e)}"
+			)
+			return {
+				"status": "error",
+				"message": f"Failed to get apps from remote server: {str(e)}"
+			}
+	except Exception as e:
+		frappe.log_error(
+			title="Get Remote Apps Failed",
+			message=frappe.get_traceback()
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to get remote apps: {str(e)}"
+		}
+
+
+@frappe.whitelist()
 def trigger_fetch_all(doctype: str = None):
 	"""
 	API endpoint to manually trigger fetch for all documents from remote
@@ -152,4 +254,64 @@ def trigger_fetch_all(doctype: str = None):
 		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_all?doctype=Customer
 	"""
 	return fetch_all_documents_from_remote(doctype)
+
+
+@frappe.whitelist()
+def get_installed_apps_info():
+	"""
+	API endpoint to get installed apps information (similar to show_about())
+	This can be called on the remote server to get apps list
+	
+	Usage:
+		GET /api/method/havano_sync.havano_sync.api.sync.get_installed_apps_info
+	"""
+	try:
+		import frappe
+		from frappe.utils import get_site_info
+		
+		# Get installed apps
+		installed_apps = frappe.get_installed_apps()
+		
+		# Get app details from Installed Application doctype
+		apps_with_versions = []
+		for app_name in installed_apps:
+			app_version = ""
+			try:
+				# Try to get version from Installed Application
+				installed_app = frappe.get_doc("Installed Application", app_name)
+				app_version = installed_app.app_version or ""
+			except:
+				# If not found, try to get from app's hooks or version file
+				try:
+					app_path = frappe.get_app_path(app_name)
+					import os
+					version_file = os.path.join(app_path, "..", "..", app_name, "version.txt")
+					if os.path.exists(version_file):
+						with open(version_file, "r") as f:
+							app_version = f.read().strip()
+				except:
+					pass
+			
+			apps_with_versions.append({
+				"app_name": app_name,
+				"app_version": app_version
+			})
+		
+		# Get site information
+		site_info = get_site_info()
+		
+		return {
+			"apps": apps_with_versions,
+			"site_info": site_info
+		}
+	except Exception as e:
+		frappe.log_error(
+			title="Failed to get installed apps info",
+			message=frappe.get_traceback()
+		)
+		return {
+			"apps": [],
+			"site_info": {},
+			"error": str(e)
+		}
 

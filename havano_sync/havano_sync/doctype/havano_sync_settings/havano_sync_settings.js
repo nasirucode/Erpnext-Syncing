@@ -82,6 +82,139 @@ frappe.ui.form.on("Havano Sync Settings", {
 			}
 		}, __("Actions"));
 
+		// Add Get Apps button
+		frm.add_custom_button(__("Get Apps"), function() {
+			// Validate required fields first
+			if (!frm.doc.admin_api_key) {
+				frappe.show_alert({
+					message: __("Please configure Admin API Key before getting apps."),
+					indicator: "orange"
+				}, 5);
+				return;
+			}
+
+			if (!frm.doc.remote_url) {
+				frappe.show_alert({
+					message: __("Please configure Remote Server URL before getting apps."),
+					indicator: "orange"
+				}, 5);
+				return;
+			}
+
+			// Save form first if there are changes (required for password field)
+			const getApps = function() {
+				frappe.call({
+					method: "havano_sync.havano_sync.api.sync.get_remote_apps",
+					freeze: true,
+					freeze_message: __("Getting apps from remote server..."),
+					callback: function(r) {
+						if (r.message) {
+							if (r.message.status === "success") {
+								const apps = r.message.apps || [];
+								const count = r.message.count || 0;
+								const versions = r.message.versions || {};
+								
+								if (count > 0) {
+									// Create a modal similar to show_about()
+									let modal_content = "<div style='padding: 20px;'>";
+									
+									// Add apps list (similar to show_about format)
+									modal_content += "<h4 style='margin-bottom: 15px;'>" + __("Installed Applications") + " (" + count + ")</h4>";
+									modal_content += "<div id='remote-app-versions' style='margin-bottom: 20px;'>";
+									
+									// Display apps in the same format as show_about()
+									for (const app_name in versions) {
+										const app = versions[app_name];
+										let version_text = "";
+										
+										if (app.branch) {
+											version_text = `v${app.branch_version || app.version} (${app.branch})`;
+										} else {
+											version_text = `v${app.version}`;
+										}
+										
+										modal_content += `<p class='app-version' style='margin: 8px 0; padding: 5px; cursor: pointer;' title='${app_name}: ${app.branch_version || app.version}'>`;
+										modal_content += `<b>${app.title || app_name}:</b> ${version_text}`;
+										modal_content += "</p>";
+									}
+									
+									modal_content += "</div>";
+									modal_content += "</div>";
+									
+									// Show in a modal dialog
+									const dialog = new frappe.ui.Dialog({
+										title: __("About Remote Server"),
+										fields: [
+											{
+												fieldtype: "HTML",
+												options: modal_content
+											}
+										],
+										size: "large"
+									});
+									
+									// Add click handler to copy app version (like show_about)
+									dialog.on_page_show = function() {
+										$(dialog.body).find(".app-version").on("click", function() {
+											const title = $(this).attr("title");
+											if (title) {
+												frappe.utils.copy_to_clipboard(title);
+												frappe.show_alert({
+													message: __("Copied to clipboard"),
+													indicator: "green"
+												}, 2);
+											}
+										});
+									};
+									
+									dialog.show();
+								} else {
+									frappe.show_alert({
+										message: r.message.message || __("No apps found on remote server."),
+										indicator: "orange"
+									}, 5);
+								}
+							} else {
+								frappe.show_alert({
+									message: r.message.message || __("Failed to get apps from remote server."),
+									indicator: "red"
+								}, 5);
+							}
+						}
+					},
+					error: function(r) {
+						const error_msg = r.message && r.message.message 
+							? r.message.message 
+							: __("Failed to get apps from remote server.");
+						frappe.show_alert({
+							message: error_msg,
+							indicator: "red"
+						}, 5);
+					}
+				});
+			};
+
+			// Save form first if there are changes (required for password field)
+			if (frm.is_dirty()) {
+				if (frm.doc.admin_api_secret && frm.doc.admin_api_secret.trim() !== '') {
+					frm.save().then(function() {
+						getApps();
+					}).catch(function(err) {
+						// If save fails, still try with previously saved values
+						getApps();
+					});
+				} else {
+					frappe.show_alert({
+						message: __("Please configure Admin API Secret before getting apps. Save the form first if you've entered a new password."),
+						indicator: "orange"
+					}, 5);
+				}
+			} else {
+				// No changes, use saved values
+				getApps();
+			}
+		}, __("Actions"));
+
 		// Add Test Sync button
 		frm.add_custom_button(__("Test Sync"), function() {
 			// Validate required fields first
