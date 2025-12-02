@@ -42,6 +42,186 @@ def get_sync_settings():
 		frappe.throw("Havano Sync Settings not found. Please configure it first.")
 
 
+def is_submittable_doctype(doctype: str) -> bool:
+	"""
+	Check if a doctype is submittable (has docstatus field)
+	
+	Args:
+		doctype: Document type to check
+	
+	Returns:
+		True if doctype is submittable, False otherwise
+	"""
+	try:
+		meta = frappe.get_meta(doctype)
+		return meta.is_submittable
+	except Exception:
+		# If we can't get meta, assume it's not submittable
+		return False
+
+
+def ensure_sync_fields_exist_on_remote(doctype: str, api_client: Any, settings: Any = None) -> bool:
+	"""
+	Ensure sync_reference and sync_type fields exist on remote doctype
+	Creates them if they don't exist
+	For all syncable and compulsory doctypes (not just submittable)
+	
+	Args:
+		doctype: Document type
+		api_client: SyncAPI client instance
+		settings: Havano Sync Settings (optional, will be fetched if not provided)
+	
+	Returns:
+		True if fields exist or were created, False otherwise
+	"""
+	try:
+		# Check if doctype is syncable (in syncable doctypes with send enabled) or is compulsory
+		if settings is None:
+			settings = get_sync_settings()
+		
+		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+		is_compulsory = doctype in auto_sync_doctypes
+		is_syncable = should_sync_doctype(doctype, settings, direction="send")
+		
+		# Only create fields for syncable or compulsory doctypes
+		if not is_compulsory and not is_syncable:
+			return True  # Not syncable, no need for sync fields
+		
+		# Try to get the doctype document from remote to check if fields exist
+		try:
+			# Get the doctype document directly
+			doctype_doc = api_client.get_document("DocType", doctype)
+			
+			# Check if sync_reference and sync_type fields exist
+			fields = doctype_doc.get('fields', [])
+			if not isinstance(fields, list):
+				fields = []
+			
+			field_names = [f.get('fieldname') for f in fields if f.get('fieldname')]
+			
+			has_sync_reference = 'sync_reference' in field_names
+			has_sync_type = 'sync_type' in field_names
+			
+			if has_sync_reference and has_sync_type:
+				return True  # Fields already exist
+			
+			# Fields don't exist, create them
+			
+			# Ensure fields list exists
+			if 'fields' not in doctype_doc or not isinstance(doctype_doc.get('fields'), list):
+				doctype_doc['fields'] = []
+			
+			# Find the last field index
+			max_idx = 0
+			for field in doctype_doc.get('fields', []):
+				idx = field.get('idx', 0)
+				if isinstance(idx, (int, float)):
+					max_idx = max(max_idx, int(idx))
+			
+			# Add fields if they don't exist
+			if not has_sync_reference:
+				sync_ref_field = {
+					"fieldname": "sync_reference",
+					"fieldtype": "Data",
+					"label": "Sync Reference",
+					"description": "Reference to the corresponding document in remote/local instance",
+					"read_only": 1,
+					"no_copy": 1,
+					"unique": 1,  # Mark as unique to avoid duplication
+					"idx": max_idx + 1
+				}
+				doctype_doc['fields'].append(sync_ref_field)
+				max_idx += 1
+			
+			if not has_sync_type:
+				sync_type_field = {
+					"fieldname": "sync_type",
+					"fieldtype": "Select",
+					"label": "Sync Type",
+					"options": "Local\nRemote",
+					"description": "Indicates whether this document is from Local or Remote instance",
+					"read_only": 1,
+					"no_copy": 1,
+					"default": "Local",
+					"idx": max_idx + 1
+				}
+				doctype_doc['fields'].append(sync_type_field)
+			
+			# Save the doctype with new fields using frappe.client.save
+			# Remove metadata fields before saving
+			metadata_fields = {'name', 'doctype', 'modified', 'modified_by', 'creation', 'owner', '_user_tags', '_comments', '_assign', '_liked_by', '_seen'}
+			doctype_data = {k: v for k, v in doctype_doc.items() if k not in metadata_fields}
+			doctype_data['doctype'] = "DocType"
+			doctype_data['name'] = doctype
+			
+			# Use update_document to save
+			api_client.update_document("DocType", doctype, doctype_data)
+			
+			# Fields have been created, no need to clear cache as update_document handles it
+			
+			frappe.logger().info(f"Created sync_reference and sync_type fields on remote doctype {doctype}")
+			return True
+			
+		except Exception as e:
+			frappe.log_error(
+				title="Failed to ensure sync fields on remote",
+				message=f"Could not ensure sync fields exist on remote doctype {doctype}: {str(e)}"
+			)
+			return False
+			
+	except Exception as e:
+		frappe.log_error(
+			title="Failed to check/create sync fields",
+			message=f"Error checking/creating sync fields for {doctype}: {str(e)}"
+		)
+		return False
+
+
+def belongs_to_company(doc_data: Dict[str, Any], doctype: str, company: Optional[str]) -> bool:
+	"""
+	Check if a document belongs to the specified company
+	
+	Args:
+		doc_data: Document data dictionary
+		doctype: Document type
+		company: Company name to check against (None means no filter)
+	
+	Returns:
+		True if document belongs to company or company is not specified, False otherwise
+	"""
+	if not company:
+		return True
+	
+	# Direct company field
+	if 'company' in doc_data and doc_data.get('company') == company:
+		return True
+	
+	# For doctypes that have company field, check it
+	company_doctypes = {
+		'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
+		'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
+		'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
+		'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
+		'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
+		'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
+		'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
+		'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
+		'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
+		'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
+	}
+	
+	if doctype in company_doctypes:
+		doc_company = doc_data.get('company')
+		if doc_company and doc_company != company:
+			return False
+	
+	# For Company doctype itself, check if it's the specified company
+	if doctype == 'Company':
+		return doc_data.get('name') == company or doc_data.get('company_name') == company
+	
+	return True
+
+
 def get_decrypted_api_secret(settings=None):
 	"""
 	Get decrypted admin_api_secret from Havano Sync Settings
@@ -247,13 +427,14 @@ def prepare_doc_for_sync(doc) -> Dict[str, Any]:
 	"""Prepare document data for syncing (remove internal fields and convert date/datetime)"""
 	doc_dict = doc.as_dict()
 	
-	# Remove internal fields that shouldn't be synced
+		# Remove internal fields that shouldn't be synced
 	exclude_fields = [
 		'creation', 'modified', 'modified_by', 'owner', 
-		'idx', 'docstatus', 'doctype', 'name',
+		'idx', 'doctype', 'name',
 		'_user_tags', '_comments', '_assign', '_liked_by',
 		'__islocal', '__unsaved', '__run_link_triggers'
 	]
+	# Note: docstatus is NOT excluded - we need it for submittable doctypes
 	
 	# Also exclude child table internal fields
 	for key in list(doc_dict.keys()):
@@ -885,9 +1066,34 @@ def sync_document_to_remote(
 					message=f"Error syncing linked documents for {doctype} {name}: {str(e)}"
 				)
 		
+		# Ensure sync fields exist on remote for syncable and compulsory doctypes
+		try:
+			ensure_sync_fields_exist_on_remote(doctype, api_client, settings)
+		except Exception as e:
+			# Log but don't fail - we'll try to sync anyway
+			frappe.log_error(
+				title="Failed to ensure sync fields",
+				message=f"Could not ensure sync fields exist on remote for {doctype}: {str(e)}"
+			)
+		
 		# Prepare document data
 		doc_data = prepare_doc_for_sync(doc)
 		doc_data['doctype'] = doctype
+		
+		# For all syncable and compulsory doctypes, add sync_reference and sync_type
+		# Check if doctype is syncable or compulsory
+		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+		is_compulsory = doctype in auto_sync_doctypes
+		is_syncable = should_sync_doctype(doctype, settings, direction="send") if settings else False
+		
+		if is_compulsory or is_syncable:
+			# Set sync_reference to local document name
+			doc_data['sync_reference'] = name
+			# Set sync_type to "Local" (since this is being sent from local)
+			doc_data['sync_type'] = "Local"
+			# For submittable doctypes, include docstatus to ensure it's synced as submitted
+			if is_submittable_doctype(doctype) and hasattr(doc, 'docstatus'):
+				doc_data['docstatus'] = doc.docstatus
 		
 		# Clean up None values and empty strings that might cause issues
 		# Convert None to empty string for string fields, remove None from dict
@@ -912,11 +1118,35 @@ def sync_document_to_remote(
 		
 		# Check if document exists on remote
 		doc_exists = False
-		if not force_create:
+		existing_doc_by_reference = None
+		
+		# For all syncable and compulsory doctypes, check if document exists by sync_reference
+		# This prevents duplicates when syncing from local
+		if is_compulsory or is_syncable:
+			try:
+				# Search for document with matching sync_reference and sync_type = "Local"
+				# (since we're sending from local, we want to find documents we already sent)
+				endpoint = "frappe.client.get_list"
+				params = {
+					"doctype": doctype,
+					"filters": json.dumps({"sync_reference": name, "sync_type": "Local"}),
+					"limit_page_length": 1
+				}
+				existing_docs = api_client._make_request("GET", endpoint, params=params)
+				if existing_docs and isinstance(existing_docs, list) and len(existing_docs) > 0:
+					existing_doc_by_reference = existing_docs[0]
+					doc_exists = True
+					frappe.logger().info(f"Found existing document {doctype} {existing_doc_by_reference.get('name')} by sync_reference {name}")
+			except Exception as ref_check_error:
+				# If reference check fails, fall back to normal check
+				frappe.logger().debug(f"Could not check by sync_reference: {str(ref_check_error)}")
+		
+		if not doc_exists and not force_create:
 			try:
 				from havano_sync.havano_sync.utils.sync_api import DocumentNotFoundError
-				api_client.get_document(doctype, name)
+				remote_doc = api_client.get_document(doctype, name)
 				doc_exists = True
+				existing_doc_by_reference = {"name": name}
 			except DocumentNotFoundError:
 				# Document doesn't exist - this is expected, will create it
 				doc_exists = False
@@ -926,8 +1156,11 @@ def sync_document_to_remote(
 		
 		# Create or update document
 		if doc_exists and not force_create:
+			# Use the existing document name (might be different if found by reference)
+			update_name = existing_doc_by_reference.get('name') if existing_doc_by_reference else name
+			doc_data['name'] = update_name
 			try:
-				result = api_client.update_document(doctype, name, doc_data)
+				result = api_client.update_document(doctype, update_name, doc_data)
 				action = "updated"
 			except requests.exceptions.HTTPError as update_error:
 				# Check if it's a LinkValidationError
@@ -956,10 +1189,36 @@ def sync_document_to_remote(
 					raise
 		else:
 			# For new documents, use the same name if possible
-			doc_data['name'] = name
+			# But for submittable doctypes, we might want to let remote generate the name
+			# to avoid conflicts, or use sync_reference to track
+			# However, we should keep the name if sync_reference is set, as it helps with tracking
+			if is_submittable_doctype(doctype) and (is_compulsory or is_syncable):
+				# For syncable submittable doctypes, don't set name - let remote generate it
+				# The sync_reference will help us find it later
+				if 'name' in doc_data:
+					del doc_data['name']
+			else:
+				doc_data['name'] = name
+			
 			try:
 				result = api_client.create_document(doctype, doc_data)
 				action = "created"
+				
+				# After creating, ensure sync_reference and sync_type are set on remote
+				# This is important because remote might have generated a new name
+				if (is_compulsory or is_syncable) and result and isinstance(result, dict):
+					created_name = result.get('name') or result.get('data', {}).get('name')
+					if created_name and created_name != name:
+						# Remote generated a new name, update sync_reference to point to local name
+						try:
+							update_data = {
+								'sync_reference': name,
+								'sync_type': 'Local'
+							}
+							api_client.update_document(doctype, created_name, update_data)
+							frappe.logger().info(f"Updated sync_reference={name} and sync_type=Local on remote {doctype} {created_name}")
+						except Exception as update_error:
+							frappe.logger().warning(f"Could not update sync_reference on remote {doctype} {created_name}: {str(update_error)}")
 			except DuplicateEntryError:
 				# Document already exists - treat as success and update it instead
 				frappe.logger().info(f"Document {doctype} {name} already exists on remote. Updating instead.")
@@ -981,6 +1240,20 @@ def sync_document_to_remote(
 							result = api_client.create_document(doctype, doc_data)
 							action = "created"
 							frappe.logger().info(f"Successfully created {doctype} {name} after handling LinkValidationError")
+							
+							# After creating, ensure sync_reference and sync_type are set on remote
+							if (is_compulsory or is_syncable) and result and isinstance(result, dict):
+								created_name = result.get('name') or result.get('data', {}).get('name')
+								if created_name:
+									try:
+										update_data = {
+											'sync_reference': name,
+											'sync_type': 'Local'
+										}
+										api_client.update_document(doctype, created_name, update_data)
+										frappe.logger().info(f"Updated sync_reference={name} and sync_type=Local on remote {doctype} {created_name}")
+									except Exception as update_error:
+										frappe.logger().warning(f"Could not update sync_reference on remote {doctype} {created_name}: {str(update_error)}")
 						except Exception as retry_error:
 							# If retry still fails, raise the original error
 							raise create_error
@@ -1118,6 +1391,11 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		if doctype in system_doctypes:
 			return
 		
+		# For submittable doctypes, skip on_create hook entirely
+		# They will be synced via on_submit hook instead to avoid double syncing
+		if is_submittable_doctype(doctype):
+			return  # Skip submittable doctypes in on_create, they will sync on_submit
+		
 		settings = get_sync_settings()
 		
 		# Check if settings are configured
@@ -1138,6 +1416,82 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		# Only sync if it's an auto-sync doctype OR if it's enabled for sending
 		if not should_auto_sync and not is_enabled_for_send:
 			return
+		
+		# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
+		# This must be done before syncing
+		if should_auto_sync or is_enabled_for_send:
+			try:
+				# Ensure fields exist locally
+				frappe.clear_cache(doctype=doctype)
+				frappe.clear_cache()
+				meta = frappe.get_meta(doctype)
+				has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				
+				if not has_sync_reference or not has_sync_type:
+					# Add fields to local doctype
+					doctype_doc = frappe.get_doc("DocType", doctype)
+					
+					if not has_sync_reference:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_reference",
+							"fieldtype": "Data",
+							"label": "Sync Reference",
+							"description": "Reference to the corresponding document in remote/local instance",
+							"read_only": 1,
+							"no_copy": 1,
+							"unique": 1  # Mark as unique to avoid duplication
+						})
+					
+					if not has_sync_type:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_type",
+							"fieldtype": "Select",
+							"label": "Sync Type",
+							"options": "Local\nRemote",
+							"description": "Indicates whether this document is from Local or Remote instance",
+							"read_only": 1,
+							"no_copy": 1,
+							"default": "Local"
+						})
+					
+					doctype_doc.save(ignore_permissions=True)
+					frappe.db.commit()
+					frappe.logger().info(f"Created sync_reference and sync_type fields on local doctype {doctype}")
+					# Reload meta
+					frappe.clear_cache(doctype=doctype)
+					frappe.clear_cache()
+					frappe.clear_cache(doctype=doctype)
+					frappe.clear_cache()
+					meta = frappe.get_meta(doctype)
+			except Exception as e:
+				frappe.log_error(
+					title="Failed to ensure sync fields locally",
+					message=f"Could not ensure sync fields exist locally for {doctype}: {str(e)}"
+				)
+			
+			# Set sync_reference and sync_type on the document before syncing
+			try:
+				# Reload meta to ensure we have the latest fields
+				frappe.clear_cache(doctype=doctype)
+				frappe.clear_cache()
+				meta = frappe.get_meta(doctype)
+				has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				
+				if has_sync_reference and has_sync_type:
+					# Set the fields using db_set to avoid triggering hooks
+					frappe.db.set_value(doctype, doc.name, {
+						'sync_reference': doc.name,
+						'sync_type': 'Local'
+					}, update_modified=False)
+					frappe.db.commit()
+					frappe.logger().info(f"Set sync_reference={doc.name} and sync_type=Local on {doctype} {doc.name}")
+			except Exception as e:
+				frappe.log_error(
+					title="Failed to set sync fields on document",
+					message=f"Could not set sync_reference and sync_type on {doctype} {doc.name}: {str(e)}"
+				)
 		
 		# Check internet connection
 		has_internet = check_internet_connection(settings)
@@ -1194,11 +1548,193 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		)
 
 
+def sync_document_on_submit(doc, method: Optional[str] = None):
+	"""
+	Sync document when it's submitted
+	This is called via doc_events hook
+	Only works on Local server to send to Remote
+	For submittable doctypes, syncs as submitted (docstatus = 1)
+	"""
+	try:
+		doctype = doc.doctype
+		
+		# Prevent syncing system/internal doctypes to avoid recursion
+		system_doctypes = [
+			"Error Log", "Activity Log", "Comment", "Version", "Communication",
+			"Email Queue", "Email Queue Recipient", "Notification Log",
+			"Scheduled Job Log", "Scheduled Job Type",
+			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings"
+		]
+		
+		if doctype in system_doctypes:
+			return
+		
+		# Only sync submittable doctypes on submit
+		if not is_submittable_doctype(doctype):
+			return
+		
+		# Only sync if document is actually submitted (docstatus = 1)
+		if doc.docstatus != 1:
+			return
+		
+		settings = get_sync_settings()
+		
+		# Check if settings are configured
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return
+		
+		# Auto-sync doctypes that should always sync (compulsory doctypes)
+		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+		
+		# Check if this doctype should auto-sync, or if it's enabled for sending
+		should_auto_sync = doctype in auto_sync_doctypes
+		is_enabled_for_send = should_sync_doctype(doctype, settings, direction="send")
+		
+		# Only sync if it's in auto-sync doctypes OR if it's enabled for sending
+		if not should_auto_sync and not is_enabled_for_send:
+			return
+		
+		# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
+		# This must be done before syncing
+		if should_auto_sync or is_enabled_for_send:
+			try:
+				# Ensure fields exist locally
+				frappe.clear_cache(doctype=doctype)
+				frappe.clear_cache()
+				meta = frappe.get_meta(doctype)
+				has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				
+				if not has_sync_reference or not has_sync_type:
+					# Add fields to local doctype
+					doctype_doc = frappe.get_doc("DocType", doctype)
+					
+					if not has_sync_reference:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_reference",
+							"fieldtype": "Data",
+							"label": "Sync Reference",
+							"description": "Reference to the corresponding document in remote/local instance",
+							"read_only": 1,
+							"no_copy": 1,
+							"unique": 1  # Mark as unique to avoid duplication
+						})
+					
+					if not has_sync_type:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_type",
+							"fieldtype": "Select",
+							"label": "Sync Type",
+							"options": "Local\nRemote",
+							"description": "Indicates whether this document is from Local or Remote instance",
+							"read_only": 1,
+							"no_copy": 1,
+							"default": "Local"
+						})
+					
+					doctype_doc.save(ignore_permissions=True)
+					frappe.db.commit()
+					frappe.logger().info(f"Created sync_reference and sync_type fields on local doctype {doctype}")
+					# Reload meta
+					frappe.clear_cache(doctype=doctype)
+					frappe.clear_cache()
+					frappe.clear_cache(doctype=doctype)
+					frappe.clear_cache()
+					meta = frappe.get_meta(doctype)
+			except Exception as e:
+				frappe.log_error(
+					title="Failed to ensure sync fields locally",
+					message=f"Could not ensure sync fields exist locally for {doctype}: {str(e)}"
+				)
+			
+			# Set sync_reference and sync_type on the document before syncing
+			try:
+				# Reload meta to ensure we have the latest fields
+				frappe.clear_cache(doctype=doctype)
+				frappe.clear_cache()
+				meta = frappe.get_meta(doctype)
+				has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				
+				if has_sync_reference and has_sync_type:
+					# Set the fields using db_set to avoid triggering hooks
+					frappe.db.set_value(doctype, doc.name, {
+						'sync_reference': doc.name,
+						'sync_type': 'Local'
+					}, update_modified=False)
+					frappe.db.commit()
+					frappe.logger().info(f"Set sync_reference={doc.name} and sync_type=Local on {doctype} {doc.name}")
+			except Exception as e:
+				frappe.log_error(
+					title="Failed to set sync fields on document",
+					message=f"Could not set sync_reference and sync_type on {doctype} {doc.name}: {str(e)}"
+				)
+		
+		# Check internet connection
+		has_internet = check_internet_connection(settings)
+		
+		if has_internet:
+			# Try to sync immediately
+			try:
+				doc_data = prepare_doc_for_sync(doc)
+				result = sync_document_to_remote(
+					doctype,
+					doc.name,
+					settings.remote_url,
+					settings.admin_api_key,
+					api_secret=None,  # Will be decrypted in function
+					force_create=True,
+					sync_method="Auto",
+					settings=settings
+				)
+				
+				if result["status"] == "error":
+					# If sync fails, queue it
+					queue_sync_job(
+						doctype=doctype,
+						name=doc.name,
+						sync_type="Send",
+						document_data=doc_data,
+						priority=5
+					)
+			except:
+				# If any error, queue the job
+				doc_data = prepare_doc_for_sync(doc)
+				queue_sync_job(
+					doctype=doctype,
+					name=doc.name,
+					sync_type="Send",
+					document_data=doc_data,
+					priority=5
+				)
+		else:
+			# No internet, queue the job
+			doc_data = prepare_doc_for_sync(doc)
+			queue_sync_job(
+				doctype=doctype,
+				name=doc.name,
+				sync_type="Send",
+				document_data=doc_data,
+				priority=5
+			)
+	
+	except Exception as e:
+		frappe.log_error(
+			f"Sync on Submit Failed: {doc.doctype} {doc.name}",
+			frappe.get_traceback()
+		)
+
+
 def sync_document_on_update(doc, method: Optional[str] = None):
 	"""
 	Sync document when it's updated
 	This is called via doc_events hook
 	Only works on Local server to send to Remote
+	For syncable doctypes with 'send' enabled, auto-syncs on save
 	"""
 	try:
 		doctype = doc.doctype
@@ -1224,14 +1760,22 @@ def sync_document_on_update(doc, method: Optional[str] = None):
 		if not settings.enable_sync:
 			return
 		
-		# Auto-sync doctypes that should always sync on update
+		# Check if this doctype is enabled for sending
+		is_enabled_for_send = should_sync_doctype(doctype, settings, direction="send")
+		
+		# For submittable doctypes, only sync submitted documents (docstatus = 1)
+		if is_submittable_doctype(doctype):
+			if doc.docstatus != 1:
+				return  # Skip draft documents
+		
+		# Auto-sync doctypes that should always sync on update (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 		
 		# Check if this doctype should auto-sync, or if it's enabled for sending
 		should_auto_sync = doctype in auto_sync_doctypes
-		is_enabled_for_send = should_sync_doctype(doctype, settings, direction="send")
 		
-		# Only sync if it's an auto-sync doctype OR if it's enabled for sending
+		# Only sync if it's in auto-sync doctypes OR if it's enabled for sending in syncable doctypes
+		# This ensures all doctypes with "send to remote" checked will sync on save
 		if not should_auto_sync and not is_enabled_for_send:
 			return
 		
@@ -1466,17 +2010,34 @@ def fetch_document_from_remote(doctype: str, name: str):
 			frappe.throw(f"Doctype {doctype} is not configured for fetching from remote")
 		
 		# Check if document already exists locally - skip if it does
+		# For submittable doctypes, also check by sync_reference
+		existing_local_doc = None
 		try:
 			local_doc = frappe.get_doc(doctype, name)
+			existing_local_doc = local_doc
+		except frappe.DoesNotExistError:
+			# Document doesn't exist by name, check by sync_reference for submittable doctypes
+			if is_submittable_doctype(doctype):
+				try:
+					# Check if a document with this sync_reference already exists
+					existing = frappe.get_all(
+						doctype,
+						filters={"sync_reference": name, "sync_type": "Local"},
+						limit=1
+					)
+					if existing:
+						existing_local_doc = frappe.get_doc(doctype, existing[0].name)
+						frappe.logger().info(f"Found existing document {doctype} {existing[0].name} by sync_reference {name}")
+				except Exception:
+					pass
+		
+		if existing_local_doc:
 			return {
 				"status": "skipped",
-				"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
+				"message": f"Document {doctype} {existing_local_doc.name} already exists locally (matched by sync_reference {name}). Skipping fetch.",
 				"doctype": doctype,
-				"name": name
+				"name": existing_local_doc.name
 			}
-		except frappe.DoesNotExistError:
-			# Document doesn't exist locally, proceed with fetch
-			pass
 		
 		# Get decrypted API secret
 		api_secret = get_decrypted_api_secret(settings)
@@ -1485,6 +2046,23 @@ def fetch_document_from_remote(doctype: str, name: str):
 		
 		# Initialize API client
 		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
+		
+		# Check company filter before fetching
+		company = getattr(settings, 'company', None)
+		if company:
+			# First, get the document to check its company
+			try:
+				remote_doc_check = api_client.get_document(doctype, name)
+				if not belongs_to_company(remote_doc_check, doctype, company):
+					return {
+						"status": "skipped",
+						"message": f"Document {doctype} {name} belongs to different company (not {company}). Skipping fetch.",
+						"doctype": doctype,
+						"name": name
+					}
+			except DocumentNotFoundError:
+				# Document doesn't exist, will be handled below
+				pass
 		
 		# Sync linked documents first (dependencies) - for fetch direction
 		# We need to fetch the document from remote first to see its structure
@@ -1526,6 +2104,29 @@ def fetch_document_from_remote(doctype: str, name: str):
 							critical_doctypes = {'Account', 'Cost Center', 'Warehouse', 'Company', 'Currency', 'UOM', 'Item Group'}
 							should_fetch = should_sync_doctype(link_doctype, settings, direction="fetch") or link_doctype in critical_doctypes
 							
+							# If company filter is set, check if linked document belongs to that company
+							company = getattr(settings, 'company', None)
+							if company and should_fetch:
+								# For company-specific doctypes, check if they belong to the specified company
+								company_doctypes = {'Account', 'Cost Center', 'Warehouse'}
+								if link_doctype in company_doctypes:
+									# Try to fetch and check company
+									try:
+										link_doc_check = api_client.get_document(link_doctype, link_value)
+										if not belongs_to_company(link_doc_check, link_doctype, company):
+											# Skip this linked document as it doesn't belong to the specified company
+											frappe.logger().info(f"Skipping linked document {link_doctype} {link_value} - belongs to different company")
+											continue
+									except Exception as check_error:
+										# If we can't check, skip it to be safe
+										frappe.logger().warning(f"Could not check company for {link_doctype} {link_value}: {str(check_error)}")
+										continue
+								elif link_doctype == 'Company':
+									# Only fetch the specified company
+									if link_value != company:
+										frappe.logger().info(f"Skipping linked Company {link_value} - not the specified company {company}")
+										continue
+							
 							if should_fetch:
 								links_to_fetch.append((link_doctype, link_value, field.fieldname))
 			
@@ -1548,6 +2149,29 @@ def fetch_document_from_remote(doctype: str, name: str):
 											# Check if it's enabled for fetch OR is a critical dependency
 											critical_doctypes = {'Account', 'Cost Center', 'Warehouse', 'Company', 'Currency', 'UOM', 'Item Group'}
 											should_fetch = should_sync_doctype(link_doctype, settings, direction="fetch") or link_doctype in critical_doctypes
+											
+											# If company filter is set, check if linked document belongs to that company
+											company = getattr(settings, 'company', None)
+											if company and should_fetch:
+												# For company-specific doctypes, check if they belong to the specified company
+												company_doctypes = {'Account', 'Cost Center', 'Warehouse'}
+												if link_doctype in company_doctypes:
+													# Try to fetch and check company
+													try:
+														link_doc_check = api_client.get_document(link_doctype, link_value)
+														if not belongs_to_company(link_doc_check, link_doctype, company):
+															# Skip this linked document as it doesn't belong to the specified company
+															frappe.logger().info(f"Skipping linked document {link_doctype} {link_value} from child table - belongs to different company")
+															continue
+													except Exception as check_error:
+														# If we can't check, skip it to be safe
+														frappe.logger().warning(f"Could not check company for {link_doctype} {link_value}: {str(check_error)}")
+														continue
+												elif link_doctype == 'Company':
+													# Only fetch the specified company
+													if link_value != company:
+														frappe.logger().info(f"Skipping linked Company {link_value} from child table - not the specified company {company}")
+														continue
 											
 											if should_fetch:
 												links_to_fetch.append((link_doctype, link_value, f"{field.fieldname}.{child_field.fieldname}"))
@@ -1674,11 +2298,72 @@ def fetch_document_from_remote(doctype: str, name: str):
 		# Fetch document from remote (we already have it, but need to process it)
 		start_time = time.time()
 		
+		# For submittable doctypes, ensure sync fields exist locally
+		if is_submittable_doctype(doctype):
+			try:
+				# Force reload meta to get latest fields
+				frappe.clear_cache(doctype=doctype)
+				frappe.clear_cache()
+				meta = frappe.get_meta(doctype)
+				has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				
+				if not has_sync_reference or not has_sync_type:
+					# Add fields to local doctype
+					doctype_doc = frappe.get_doc("DocType", doctype)
+					
+					if not has_sync_reference:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_reference",
+							"fieldtype": "Data",
+							"label": "Sync Reference",
+							"description": "Reference to the corresponding document in remote/local instance",
+							"read_only": 1,
+							"no_copy": 1
+						})
+					
+					if not has_sync_type:
+						doctype_doc.append("fields", {
+							"fieldname": "sync_type",
+							"fieldtype": "Select",
+							"label": "Sync Type",
+							"options": "Local\nRemote",
+							"description": "Indicates whether this document is from Local or Remote instance",
+							"read_only": 1,
+							"no_copy": 1,
+							"default": "Local"
+						})
+					
+					doctype_doc.save(ignore_permissions=True)
+					frappe.db.commit()
+					frappe.logger().info(f"Created sync_reference and sync_type fields on local doctype {doctype}")
+					# Reload meta - clear all caches
+					frappe.clear_cache(doctype=doctype)
+					frappe.clear_cache()
+					# Meta will be reloaded on next get_meta call
+			except Exception as e:
+				frappe.log_error(
+					title="Failed to ensure sync fields locally",
+					message=f"Could not ensure sync fields exist locally for {doctype}: {str(e)}"
+				)
+		
 		# Create document locally
 		# Remove metadata fields that shouldn't be set during creation
 		metadata_fields = {'name', 'doctype', 'modified', 'modified_by', 'creation', 'owner', '_user_tags', '_comments', '_assign', '_liked_by', '_seen', 'docstatus'}
 		doc_data = {k: v for k, v in remote_doc.items() if k not in metadata_fields}
 		doc_data['doctype'] = doctype
+		
+		# For all syncable and compulsory doctypes, set sync_reference and sync_type
+		# Check if doctype is syncable or compulsory
+		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+		is_compulsory = doctype in auto_sync_doctypes
+		is_syncable = should_sync_doctype(doctype, settings, direction="send")
+		
+		if is_compulsory or is_syncable:
+			# Set sync_reference to remote document name
+			doc_data['sync_reference'] = name
+			# Set sync_type to "Remote" (since this is being fetched from remote)
+			doc_data['sync_type'] = "Remote"
 		
 		# Ensure all fetched documents are committed before creating the main document
 		frappe.db.commit()
@@ -1891,6 +2576,38 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 					"doctype": doctype_name,
 					"limit_page_length": 1000
 				}
+				
+				# For submittable doctypes, only fetch submitted documents (docstatus = 1)
+				filters = {}
+				if is_submittable_doctype(doctype_name):
+					filters["docstatus"] = 1
+				
+				# Add company filter if specified in settings
+				company = getattr(settings, 'company', None)
+				if company:
+					# For doctypes that have company field, filter by company
+					company_doctypes = {
+						'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
+						'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
+						'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
+						'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
+						'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
+						'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
+						'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
+						'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
+						'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
+						'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
+					}
+					if doctype_name in company_doctypes:
+						filters["company"] = company
+					elif doctype_name == 'Company':
+						# For Company doctype, only fetch the specified company
+						filters["name"] = company
+				
+				# Apply filters if any
+				if filters:
+					params["filters"] = json.dumps(filters)
+				
 				remote_docs = api_client._make_request("GET", endpoint, params=params)
 				
 				if not remote_docs or not isinstance(remote_docs, list):
@@ -1922,10 +2639,79 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						# Fetch document from remote
 						remote_doc = api_client.get_document(doctype_name, doc_name)
 						
+						# Check if document belongs to specified company
+						company = getattr(settings, 'company', None)
+						if company and not belongs_to_company(remote_doc, doctype_name, company):
+							results["skipped"].append({
+								"doctype": doctype_name,
+								"name": doc_name,
+								"message": f"Document belongs to different company (not {company})"
+							})
+							continue
+						
 						# Remove metadata fields that shouldn't be set during creation
 						metadata_fields = {'name', 'doctype', 'modified', 'modified_by', 'creation', 'owner', '_user_tags', '_comments', '_assign', '_liked_by', '_seen', 'docstatus'}
 						doc_data = {k: v for k, v in remote_doc.items() if k not in metadata_fields}
 						doc_data['doctype'] = doctype_name
+						
+						# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
+						# Check if doctype is syncable or compulsory
+						auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+						is_compulsory = doctype_name in auto_sync_doctypes
+						is_syncable = should_sync_doctype(doctype_name, settings, direction="send")
+						
+						if is_compulsory or is_syncable:
+							try:
+								# Force reload meta to get latest fields
+								frappe.clear_cache(doctype=doctype_name)
+								frappe.clear_cache()
+								meta = frappe.get_meta(doctype_name)
+								has_sync_reference = any(f.fieldname == 'sync_reference' for f in meta.fields)
+								has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+								
+								if not has_sync_reference or not has_sync_type:
+									# Add fields to local doctype
+									doctype_doc = frappe.get_doc("DocType", doctype_name)
+									
+									if not has_sync_reference:
+										doctype_doc.append("fields", {
+											"fieldname": "sync_reference",
+											"fieldtype": "Data",
+											"label": "Sync Reference",
+											"description": "Reference to the corresponding document in remote/local instance",
+											"read_only": 1,
+											"no_copy": 1,
+											"unique": 1  # Mark as unique to avoid duplication
+										})
+									
+									if not has_sync_type:
+										doctype_doc.append("fields", {
+											"fieldname": "sync_type",
+											"fieldtype": "Select",
+											"label": "Sync Type",
+											"options": "Local\nRemote",
+											"description": "Indicates whether this document is from Local or Remote instance",
+											"read_only": 1,
+											"no_copy": 1,
+											"default": "Local"
+										})
+									
+									doctype_doc.save(ignore_permissions=True)
+									frappe.db.commit()
+									frappe.logger().info(f"Created sync_reference and sync_type fields on local doctype {doctype_name}")
+									# Reload meta - clear all caches
+									frappe.clear_cache(doctype=doctype_name)
+									frappe.clear_cache()
+									# Meta will be reloaded on next get_meta call
+							except Exception as e:
+								frappe.log_error(
+									title="Failed to ensure sync fields locally",
+									message=f"Could not ensure sync fields exist locally for {doctype_name}: {str(e)}"
+								)
+							
+							# Set sync_reference and sync_type
+							doc_data['sync_reference'] = doc_name
+							doc_data['sync_type'] = "Remote"
 						
 						# Create the document
 						local_doc = frappe.get_doc(doc_data)
@@ -2012,8 +2798,14 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 				if not send_enabled:
 					continue
 				
+				# For submittable doctypes, only sync submitted documents (docstatus = 1)
+				filters = {}
+				if is_submittable_doctype(doctype_name):
+					filters["docstatus"] = 1
+				
 				docs = frappe.get_all(
 					doctype_name,
+					filters=filters,
 					fields=["name"],
 					limit=1000
 				)
@@ -2058,8 +2850,14 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 				continue
 			
 			# Get all documents of this doctype
+			# For submittable doctypes, only sync submitted documents (docstatus = 1)
+			filters = {}
+			if is_submittable_doctype(doctype_name):
+				filters["docstatus"] = 1
+			
 			docs = frappe.get_all(
 				doctype_name,
+				filters=filters,
 				fields=["name"],
 				limit=1000  # Limit to prevent timeout
 			)

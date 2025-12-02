@@ -11,6 +11,7 @@
   "admin_api_secret",
   "admin_api_key",
   "section_break_hmdv",
+  "company",
   "syncable_doctypes"
  ],
  "fields": [
@@ -45,6 +46,13 @@
   {
    "fieldname": "section_break_hmdv",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "description": "Specify the company to work with. Only documents belonging to this company (and associated accounts, warehouses, cost centers) will be fetched from remote."
   },
   {
    "fieldname": "syncable_doctypes",

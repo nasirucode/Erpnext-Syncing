@@ -138,21 +138,21 @@ app_license = "mit"
 # Hook on document methods and events
 
 doc_events = {
-	"Customer": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
+	"*": {
+		"on_submit": "havano_sync.havano_sync.tasks.sync.sync_document_on_submit",
 		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+	},
+	"Customer": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	},
 	"Sales Invoice": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
-		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	},
 	"Payment Entry": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
-		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	},
 	"Sales Order": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create",
-		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	}
 }
 

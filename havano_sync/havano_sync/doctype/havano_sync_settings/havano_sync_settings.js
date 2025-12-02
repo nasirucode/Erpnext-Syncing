@@ -7,20 +7,18 @@ frappe.ui.form.on("Havano Sync Settings", {
 		frm.add_custom_button(__("Test Connection"), function() {
 			// Validate required fields first
 			if (!frm.doc.admin_api_key) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Admin API Key before testing connection."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
 			if (!frm.doc.remote_url) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Remote Server URL before testing connection."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
@@ -43,11 +41,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 									indicator: "green"
 								}, 5);
 							} else {
-								frappe.msgprint({
-									title: __("Connection Test Failed"),
+								frappe.show_alert({
 									message: r.message.message || __("Connection failed. Please check your settings."),
 									indicator: "red"
-								});
+								}, 5);
 							}
 						}
 					},
@@ -55,11 +52,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 						const error_msg = r.message && r.message.message 
 							? r.message.message 
 							: __("Connection failed. Please check your settings.");
-						frappe.msgprint({
-							title: __("Connection Test Failed"),
+						frappe.show_alert({
 							message: error_msg,
 							indicator: "red"
-						});
+						}, 5);
 					}
 				});
 			};
@@ -75,11 +71,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 						testConnection();
 					});
 				} else {
-					frappe.msgprint({
-						title: __("Configuration Required"),
+					frappe.show_alert({
 						message: __("Please configure Admin API Secret before testing connection. Save the form first if you've entered a new password."),
 						indicator: "orange"
-					});
+					}, 5);
 				}
 			} else {
 				// No changes, test with saved values
@@ -91,30 +86,27 @@ frappe.ui.form.on("Havano Sync Settings", {
 		frm.add_custom_button(__("Test Sync"), function() {
 			// Validate required fields first
 			if (!frm.doc.admin_api_key || !frm.doc.admin_api_secret) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Admin API Key and Admin API Secret before testing sync."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
 			if (!frm.doc.remote_url) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Remote Server URL before testing sync."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
 			// Check if there are syncable doctypes
 			if (!frm.doc.syncable_doctypes || frm.doc.syncable_doctypes.length === 0) {
-				frappe.msgprint({
-					title: __("No Syncable Doctypes"),
+				frappe.show_alert({
 					message: __("Please add at least one syncable doctype before testing sync."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
@@ -132,11 +124,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 			}
 
 			if (test_doctypes.length === 0) {
-				frappe.msgprint({
-					title: __("No Syncable Doctypes"),
+				frappe.show_alert({
 					message: __("Please enable 'Send to Remote' or 'Fetch from Remote' for at least one doctype before testing sync."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 			
@@ -156,21 +147,19 @@ frappe.ui.form.on("Havano Sync Settings", {
 				callback: function(r) {
 					if (r.message) {
 						if (r.message.status === "completed") {
-							frappe.msgprint({
-								title: __("Queue Processing Complete"),
+							frappe.show_alert({
 								message: __("Processed: {0}, Successful: {1}, Failed: {2}", [
 									r.message.processed || 0,
 									r.message.successful || 0,
 									r.message.failed || 0
 								]),
 								indicator: "green"
-							});
+							}, 5);
 						} else if (r.message.status === "skipped") {
-							frappe.msgprint({
-								title: __("Queue Processing Skipped"),
+							frappe.show_alert({
 								message: r.message.message || __("No internet connection available."),
 								indicator: "orange"
-							});
+							}, 5);
 						}
 					}
 				}
@@ -181,30 +170,27 @@ frappe.ui.form.on("Havano Sync Settings", {
 		frm.add_custom_button(__("Fetch from Remote"), function() {
 			// Validate required fields first
 			if (!frm.doc.admin_api_key || !frm.doc.admin_api_secret) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Admin API Key and Admin API Secret before fetching from remote."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
 			if (!frm.doc.remote_url) {
-				frappe.msgprint({
-					title: __("Configuration Required"),
+				frappe.show_alert({
 					message: __("Please configure Remote Server URL before fetching from remote."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
 			// Check if there are syncable doctypes with fetch enabled
 			if (!frm.doc.syncable_doctypes || frm.doc.syncable_doctypes.length === 0) {
-				frappe.msgprint({
-					title: __("No Syncable Doctypes"),
+				frappe.show_alert({
 					message: __("Please add at least one syncable doctype before fetching from remote."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
@@ -218,11 +204,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 			}
 
 			if (!has_fetch_enabled) {
-				frappe.msgprint({
-					title: __("No Fetch Enabled Doctypes"),
+				frappe.show_alert({
 					message: __("Please enable 'Fetch from Remote' for at least one doctype before fetching."),
 					indicator: "orange"
-				});
+				}, 5);
 				return;
 			}
 
@@ -255,17 +240,15 @@ frappe.ui.form.on("Havano Sync Settings", {
 											message += ` ${error_count} error(s) occurred.`;
 										}
 										
-										frappe.msgprint({
-											title: __("Fetch Completed"),
+										frappe.show_alert({
 											message: message,
 											indicator: error_count > 0 ? "orange" : "green"
-										});
+										}, 8);
 									} else {
-										frappe.msgprint({
-											title: __("Fetch Failed"),
+										frappe.show_alert({
 											message: r.message.message || __("Failed to fetch documents from remote server."),
 											indicator: "red"
-										});
+										}, 5);
 									}
 								}
 							},
@@ -273,11 +256,10 @@ frappe.ui.form.on("Havano Sync Settings", {
 								const error_msg = r.message && r.message.message 
 									? r.message.message 
 									: __("Failed to fetch documents from remote server.");
-								frappe.msgprint({
-									title: __("Fetch Failed"),
+								frappe.show_alert({
 									message: error_msg,
 									indicator: "red"
-								});
+								}, 5);
 							}
 						});
 					}
@@ -419,11 +401,10 @@ function test_all_syncable_doctypes(frm, test_doctypes) {
 			}
 			
 			const has_errors = results.send.errors.length > 0 || results.fetch.errors.length > 0;
-			frappe.msgprint({
-				title: __("Test Sync Summary"),
+			frappe.show_alert({
 				message: message,
 				indicator: has_errors ? "orange" : "green"
-			});
+			}, 8);
 			return;
 		}
 		
@@ -617,11 +598,10 @@ function test_sync_and_fetch(frm, doctype) {
 					}
 				});
 			} else {
-				frappe.msgprint({
-					title: __("No Documents Found"),
+				frappe.show_alert({
 					message: __("No documents found in {0}. Please create at least one document to test sync.", [doctype]),
 					indicator: "orange"
-				});
+				}, 5);
 			}
 		}
 	});
