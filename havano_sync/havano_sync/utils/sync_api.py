@@ -163,6 +163,120 @@ class SyncAPI:
 			)
 			raise
 	
+	def submit_document(self, doctype: str, name: str) -> Dict[str, Any]:
+		"""
+		Submit a document on the remote instance
+		"""
+		endpoint = "frappe.client.submit"
+		url = f"{self.base_url}/api/method/{endpoint}"
+		headers = self._get_headers()
+		headers["Content-Type"] = "application/x-www-form-urlencoded"
+		
+		try:
+			data = {
+				"doctype": doctype,
+				"name": name
+			}
+			response = self.session.post(
+				url,
+				headers=headers,
+				data=data,
+				timeout=30
+			)
+			response.raise_for_status()
+			result = response.json()
+			if isinstance(result, dict) and 'message' in result:
+				return result['message']
+			return result
+		except requests.exceptions.HTTPError as e:
+			error_details = {}
+			remote_error = None
+			if e.response:
+				try:
+					error_response = e.response.json()
+					remote_error = error_response.get('exc') or error_response.get('_server_messages')
+					if remote_error:
+						if isinstance(remote_error, str):
+							try:
+								remote_error = json.loads(remote_error)[0]  # Extract actual error message
+							except:
+								pass
+					error_details = error_response
+				except:
+					pass
+			
+			log_message = f"Error submitting document {doctype} {name} on remote.\nStatus: {e.response.status_code if e.response else 'unknown'}\n"
+			if remote_error:
+				log_message += f"Remote server error: {remote_error}\n"
+			log_message += f"Error details: {json.dumps(error_details, indent=2)}"
+			
+			frappe.log_error(
+				title="Sync API Submit Failed",
+				message=log_message
+			)
+			raise requests.exceptions.HTTPError(f"Failed to submit document on remote: {remote_error or str(e)}", response=e.response)
+	
+	def rename_document(self, doctype: str, old_name: str, new_name: str, merge: bool = False, force: bool = True) -> Dict[str, Any]:
+		"""
+		Rename a document on the remote instance using Frappe API v2
+		Endpoint: /api/v2/document/{doctype}/{name}/method/rename?name=newname
+		
+		Args:
+			doctype: Document type
+			old_name: Current document name on remote
+			new_name: New document name (should match local name with -Local suffix)
+			merge: Whether to merge if target name exists (default: False)
+			force: Whether to force rename (default: True)
+		"""
+		# Use API v2 endpoint: /api/v2/document/{doctype}/{name}/method/rename?name=newname
+		url = f"{self.base_url}/api/v2/document/{doctype}/{old_name}/method/rename"
+		headers = self._get_headers()
+		
+		try:
+			# API v2 uses query parameters for rename
+			params = {
+				"name": new_name
+			}
+			# Add optional parameters if needed
+			if force:
+				params["force"] = "1"
+			if merge:
+				params["merge"] = "1"
+			
+			response = self.session.post(url, headers=headers, params=params, timeout=30)
+			response.raise_for_status()
+			result = response.json()
+			# API v2 returns data directly or in 'data' key
+			if isinstance(result, dict):
+				if 'data' in result:
+					return result['data']
+				elif 'message' in result:
+					return result['message']
+			return result
+		except requests.exceptions.HTTPError as e:
+			# Handle errors similar to create_document
+			error_details = {}
+			remote_error = None
+			if e.response:
+				try:
+					error_response = e.response.json()
+					if isinstance(error_response, dict) and 'exc_type' in error_response:
+						remote_error = error_response.get('exc', '')
+						error_details = error_response
+					elif isinstance(error_response, dict) and 'error' in error_response:
+						remote_error = error_response.get('error', '')
+						error_details = error_response
+				except:
+					pass
+			error_msg = f"Failed to rename {doctype} from {old_name} to {new_name}"
+			if remote_error:
+				error_msg = f"{error_msg}\nRemote error: {remote_error}"
+			frappe.log_error(
+				title="Rename Document Failed",
+				message=error_msg
+			)
+			raise requests.exceptions.HTTPError(error_msg, response=e.response)
+	
 	def create_document(self, doctype: str, doc: Dict[str, Any]) -> Dict[str, Any]:
 		"""
 		Create a document on the remote instance
@@ -265,6 +379,25 @@ class SyncAPI:
 					error_msg = f"Link Validation Error: Referenced document not found on remote server. {error_msg}"
 				elif "TimestampMismatchError" in str(remote_error):
 					error_msg = f"Conflict Error: Document was modified on remote server. {error_msg}"
+			
+			# Check for 403 Forbidden error and provide helpful message
+			if e.response and e.response.status_code == 403:
+				error_msg = (
+					f"Permission Denied (403 Forbidden): The API user associated with the Admin API Key does not have permission to create/update documents on the remote server.\n\n"
+					f"To fix this issue:\n"
+					f"1. Go to the remote Frappe instance (https://getpos.havano.cloud)\n"
+					f"2. Navigate to User List and find the user associated with the Admin API Key\n"
+					f"3. Ensure the user has the 'System Manager' role OR has appropriate permissions for the doctype '{doctype}'\n"
+					f"4. Check the doctype permissions in Settings > Permissions for '{doctype}'\n"
+					f"5. Verify the API Key and API Secret are correct in Havano Sync Settings\n\n"
+					f"Original error: {error_msg}"
+				)
+				# Log this as a critical error with clear instructions
+				frappe.log_error(
+					title=f"Sync Permission Denied: {doctype}",
+					message=error_msg
+				)
+			
 			raise requests.exceptions.HTTPError(error_msg, response=e.response)
 	
 	def update_document(self, doctype: str, name: str, doc: Dict[str, Any]) -> Dict[str, Any]:

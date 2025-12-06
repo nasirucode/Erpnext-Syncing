@@ -139,6 +139,7 @@ app_license = "mit"
 
 doc_events = {
 	"*": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.add_local_suffix_after_insert",
 		"on_submit": "havano_sync.havano_sync.tasks.sync.sync_document_on_submit",
 		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
 	},
@@ -160,12 +161,15 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
-	"hourly": [
-		"havano_sync.havano_sync.tasks.sync.sync_cron_job"
-	],
 	"cron": {
+		"*/25 * * * *": [
+			"havano_sync.havano_sync.tasks.sync.sync_cron_job"
+		],
 		"*/15 * * * *": [
 			"havano_sync.havano_sync.tasks.sync.process_queue_cron_job"
+		],
+		"*/5 * * * *": [
+			"havano_sync.havano_sync.tasks.sync_operations.rename_remote_sales_invoices_by_sync_reference"
 		]
 	}
 }
