@@ -415,6 +415,11 @@ def sync_linked_documents(
 				# Use 'doctypes' field name from child table
 				doctype_name = syncable.get('doctypes') if hasattr(syncable, 'get') else getattr(syncable, 'doctypes', None)
 				if doctype_name:
+					# Remove -Local suffix if present (doctype names should never have -Local suffix)
+					if doctype_name.endswith("-Local"):
+						original_doctype = doctype_name
+						doctype_name = doctype_name[:-6]  # Remove "-Local" (6 characters)
+						frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {original_doctype}. Using {doctype_name} instead.")
 					enabled_doctypes.add(doctype_name)
 	
 	# Track link fields in the document and their remote names

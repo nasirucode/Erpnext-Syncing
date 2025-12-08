@@ -591,6 +591,11 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 		for syncable in syncable_doctypes:
 			doctype_name = syncable.doctypes
 			
+			# Remove -Local suffix if present (doctype names should never have -Local suffix)
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]  # Remove "-Local" (6 characters)
+				frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {doctype_name} instead.")
+			
 			# If specific doctype requested, skip others
 			if doctype and doctype_name != doctype:
 				continue

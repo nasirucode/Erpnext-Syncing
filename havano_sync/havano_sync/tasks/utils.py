@@ -156,7 +156,12 @@ def should_sync_doctype(doctype: str, settings, direction: str = "send") -> bool
 	
 	for syncable in syncable_doctypes:
 		# syncable is a child table row (document object)
-		if syncable.doctypes == doctype:
+		syncable_doctype = syncable.doctypes
+		# Remove -Local suffix if present (doctype names should never have -Local suffix)
+		if syncable_doctype and syncable_doctype.endswith("-Local"):
+			syncable_doctype = syncable_doctype[:-6]  # Remove "-Local" (6 characters)
+			frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {syncable_doctype} instead.")
+		if syncable_doctype == doctype:
 			if direction == "send":
 				return cint(syncable.get('send', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'send', 0))
 			elif direction == "fetch":
