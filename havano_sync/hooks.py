@@ -143,6 +143,9 @@ doc_events = {
 		"on_submit": "havano_sync.havano_sync.tasks.sync.sync_document_on_submit",
 		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
 	},
+	"DocType": {
+		# Explicitly exclude DocType from all hooks - DocType definitions should never be renamed or synced
+	},
 	"Customer": {
 		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	},

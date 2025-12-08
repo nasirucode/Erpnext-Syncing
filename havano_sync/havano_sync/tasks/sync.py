@@ -305,7 +305,7 @@ def sync_single_document(doctype: str, name: str):
 		
 		# Check if doctype is syncable for sending
 		# For test sync, we should respect the syncable doctype settings
-		from havano_sync.havano_sync.tasks.utils import should_sync_doctype
+		from havano_sync.havano_sync.tasks.utils import should_sync_doctype, is_submittable_doctype
 		
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
@@ -315,6 +315,27 @@ def sync_single_document(doctype: str, name: str):
 		# Only sync if it's an auto-sync doctype OR if it's enabled for sending
 		if not should_auto_sync and not is_enabled_for_send:
 			frappe.throw(f"Doctype {doctype} is not enabled for sending to remote. Please enable 'Send to Remote' for this doctype in Havano Sync Settings.")
+		
+		# For submittable doctypes, check if document is submitted
+		# Manual sync can work for both submitted and non-submitted documents
+		try:
+			doc = frappe.get_doc(doctype, name)
+			if is_submittable_doctype(doctype):
+				if doc.docstatus == 0:
+					frappe.logger().info(f"Manual sync for {doctype} {name}: Document is draft (docstatus=0). Will sync as draft.")
+				elif doc.docstatus == 1:
+					frappe.logger().info(f"Manual sync for {doctype} {name}: Document is submitted (docstatus=1). Will sync as submitted.")
+				else:
+					frappe.logger().warning(f"Manual sync for {doctype} {name}: Document has docstatus={doc.docstatus}. Will sync with current status.")
+		except frappe.DoesNotExistError:
+			# Check if document exists with -Local suffix
+			if not name.endswith("-Local"):
+				local_name = f"{name}-Local"
+				if frappe.db.exists(doctype, local_name):
+					frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {local_name}")
+					name = local_name
+				else:
+					frappe.throw(f"Document {doctype} {name} does not exist (also checked {local_name})")
 		
 		# Check internet connection
 		has_internet = check_internet_connection(settings)

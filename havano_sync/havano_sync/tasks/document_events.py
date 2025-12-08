@@ -26,8 +26,10 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		doctype = doc.doctype
 		
 		# Prevent syncing system/internal doctypes to avoid recursion
+		# CRITICAL: Never sync DocType definitions themselves - only document instances
 		# (e.g., Error Log, Activity Log, etc.)
 		system_doctypes = [
+			"DocType",  # Never sync DocType definitions!
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -205,7 +207,9 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 		doctype = doc.doctype
 		
 		# Prevent syncing system/internal doctypes to avoid recursion
+		# CRITICAL: Never sync DocType definitions themselves - only document instances
 		system_doctypes = [
+			"DocType",  # Never sync DocType definitions!
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -269,7 +273,9 @@ def sync_document_on_update(doc, method: Optional[str] = None):
 		doctype = doc.doctype
 		
 		# Prevent syncing system/internal doctypes to avoid recursion
+		# CRITICAL: Never sync DocType definitions themselves - only document instances
 		system_doctypes = [
+			"DocType",  # Never sync DocType definitions!
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -322,6 +328,11 @@ def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 	3. Register rename callback to run after commit (non-blocking)
 	4. After rename, sync will be queued in background
 	"""
+	# CRITICAL: Never rename DocType definitions themselves - only document instances
+	# This MUST be the absolute first check - before any other code
+	if not hasattr(doc, 'doctype') or doc.doctype == "DocType":
+		return
+	
 	try:
 		doctype = doc.doctype
 		
@@ -400,6 +411,10 @@ def _rename_document_after_delay(doctype: str, original_name: str, new_name: str
 	This runs in a background job, so it doesn't block the save process at all
 	"""
 	try:
+		# CRITICAL: Never rename DocType definitions themselves - only document instances
+		if doctype == "DocType":
+			return
+		
 		# Wait 10 seconds before renaming to ensure document is fully saved
 		import time
 		frappe.logger().info(f"[RENAME_AFTER_DELAY] Waiting 10 seconds before renaming {doctype} {original_name}")

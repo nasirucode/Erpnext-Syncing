@@ -124,7 +124,9 @@ def fetch_document_from_remote(doctype: str, name: str):
 					link_doctype = field.options
 					link_value = temp_doc_data.get(field.fieldname)
 					
-					if link_value:
+					# Skip None, null, empty string, or the string "None"
+					if not link_value or link_value in (None, "", "None", "null"):
+						continue
 						# Check if this linked document exists locally
 						try:
 							frappe.get_doc(link_doctype, link_value)
@@ -173,7 +175,9 @@ def fetch_document_from_remote(doctype: str, name: str):
 									link_doctype = child_field.options
 									link_value = child_row.get(child_field.fieldname)
 									
-									if link_value:
+									# Skip None, null, empty string, or the string "None"
+									if not link_value or link_value in (None, "", "None", "null"):
+										continue
 										try:
 											frappe.get_doc(link_doctype, link_value)
 										except frappe.DoesNotExistError:

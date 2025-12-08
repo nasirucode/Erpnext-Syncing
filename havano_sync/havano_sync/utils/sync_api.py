@@ -549,6 +549,32 @@ class SyncAPI:
 			# Other errors - document might exist but there's a connection/auth issue
 			return False
 	
+	def find_document_by_sync_reference(self, doctype: str, sync_reference: str, sync_type: str = "Local") -> Optional[str]:
+		"""
+		Find a document on the remote instance by sync_reference field.
+		Uses a custom API endpoint since frappe.client.get_list doesn't allow custom fields in filters.
+		
+		Args:
+			doctype: Document type to search
+			sync_reference: The sync_reference value to search for
+			sync_type: The sync_type value (default: "Local")
+		
+		Returns:
+			Document name if found, None otherwise
+		"""
+		try:
+			endpoint = "havano_sync.havano_sync.api.sync.find_document_by_sync_reference"
+			params = {
+				"doctype": doctype,
+				"sync_reference": sync_reference,
+				"sync_type": sync_type
+			}
+			result = self._make_request("GET", endpoint, params=params)
+			return result if result else None
+		except Exception as e:
+			frappe.logger().debug(f"Could not find document by sync_reference for {doctype} {sync_reference}: {str(e)}")
+			return None
+	
 	def test_connection(self):
 		"""
 		Test connection to the remote instance

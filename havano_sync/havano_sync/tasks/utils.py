@@ -206,3 +206,307 @@ def check_internet_connection(settings) -> bool:
 		frappe.log_error(f"Internet connection check failed: {str(e)}")
 		return False
 
+
+def fix_field_options_with_local_suffix():
+	"""
+	Fix field options that incorrectly reference doctypes with -Local suffix
+	This fixes database corruption where field options have doctype names with -Local suffix
+	"""
+	try:
+		# Find all fields where options ends with -Local
+		fields_to_fix = frappe.db.sql("""
+			SELECT parent, fieldname, options
+			FROM `tabDocField`
+			WHERE options LIKE '%-Local'
+			AND fieldtype = 'Link'
+		""", as_dict=True)
+		
+		if not fields_to_fix:
+			frappe.logger().info("No fields found with -Local suffix in options")
+			return {
+				"status": "success",
+				"message": "No fields found with -Local suffix in options",
+				"fixed_count": 0
+			}
+		
+		fixed_count = 0
+		for field in fields_to_fix:
+			original_options = field.options
+			# Remove -Local suffix (6 characters)
+			fixed_options = original_options[:-6]
+			
+			# Verify the fixed doctype exists
+			if frappe.db.exists("DocType", fixed_options):
+				# Update the field options
+				frappe.db.set_value(
+					"DocField",
+					{"parent": field.parent, "fieldname": field.fieldname},
+					"options",
+					fixed_options
+				)
+				fixed_count += 1
+				frappe.logger().info(
+					f"Fixed field {field.parent}.{field.fieldname}: "
+					f"options changed from '{original_options}' to '{fixed_options}'"
+				)
+			else:
+				frappe.logger().warning(
+					f"Could not fix field {field.parent}.{field.fieldname}: "
+					f"doctype '{fixed_options}' does not exist"
+				)
+		
+		# Commit the changes
+		frappe.db.commit()
+		
+		# Clear cache to ensure changes are reflected
+		frappe.clear_cache()
+		
+		return {
+			"status": "success",
+			"message": f"Fixed {fixed_count} field(s) with -Local suffix in options",
+			"fixed_count": fixed_count
+		}
+		
+	except Exception as e:
+		frappe.log_error(
+			title="Failed to fix field options with -Local suffix",
+			message=f"Error fixing field options: {str(e)}\nTraceback: {frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to fix field options: {str(e)}",
+			"fixed_count": 0
+		}
+
+
+def fix_renamed_doctypes():
+	"""
+	Fix DocType definitions that were incorrectly renamed with -Local suffix
+	This fixes database corruption where DocType definitions have -Local suffix
+	"""
+	try:
+		# First, let's check what DocTypes exist with -Local suffix
+		all_doctypes = frappe.db.sql("""
+			SELECT name
+			FROM `tabDocType`
+			WHERE name LIKE '%-Local'
+			ORDER BY name
+		""", as_dict=True)
+		
+		frappe.logger().info(f"[FIX_DOCTYPES] Query found {len(all_doctypes) if all_doctypes else 0} DocType(s) with -Local suffix")
+		
+		if all_doctypes:
+			frappe.logger().info(f"[FIX_DOCTYPES] DocTypes found: {[d.name for d in all_doctypes]}")
+		
+		# Find all DocType definitions that end with -Local
+		doctypes_to_fix = all_doctypes
+		
+		if not doctypes_to_fix:
+			# Also check with different pattern in case of encoding issues
+			doctypes_to_fix = frappe.db.sql("""
+				SELECT name
+				FROM `tabDocType`
+				WHERE name REGEXP '-Local$'
+			""", as_dict=True)
+			frappe.logger().info(f"[FIX_DOCTYPES] REGEXP query found {len(doctypes_to_fix) if doctypes_to_fix else 0} DocType(s)")
+		
+		if not doctypes_to_fix:
+			frappe.logger().info("No DocType definitions found with -Local suffix")
+			return {
+				"status": "success",
+				"message": "No DocType definitions found with -Local suffix",
+				"fixed_count": 0,
+				"fixed_doctypes": [],
+				"checked_count": len(all_doctypes) if all_doctypes else 0
+			}
+		
+		fixed_count = 0
+		fixed_doctypes = []
+		errors = []
+		skipped = []
+		
+		for doctype_info in doctypes_to_fix:
+			original_name = doctype_info.name
+			# Remove -Local suffix (6 characters)
+			fixed_name = original_name[:-6]
+			
+			frappe.logger().info(f"[FIX_DOCTYPES] Processing: '{original_name}' -> '{fixed_name}'")
+			
+			# Verify the fixed name doesn't already exist
+			if frappe.db.exists("DocType", fixed_name):
+				error_msg = f"DocType '{fixed_name}' already exists. Cannot rename '{original_name}' to '{fixed_name}'"
+				skipped.append({
+					"doctype": original_name,
+					"reason": error_msg
+				})
+				frappe.logger().warning(f"[FIX_DOCTYPES] {error_msg}")
+				continue
+			
+			frappe.logger().info(f"[FIX_DOCTYPES] Target name '{fixed_name}' is available, proceeding with rename")
+			
+			# First, find and rename all child tables that end with -Local
+			# Child tables are DocTypes where istable=1 and they might have been renamed too
+			try:
+				# Get the DocType document to find child tables
+				doctype_doc = frappe.get_doc("DocType", original_name)
+				
+				# Find all child tables by checking fields in this DocType
+				child_tables_to_fix = []
+				
+				# Check all Table fields in this DocType to find child tables
+				for field in doctype_doc.fields:
+					if field.fieldtype == "Table" and field.options:
+						child_table_name = field.options
+						# If the child table name ends with -Local, we need to fix it
+						if child_table_name.endswith("-Local"):
+							child_fixed = child_table_name[:-6]
+							# Check if fixed name already exists
+							if not frappe.db.exists("DocType", child_fixed):
+								child_tables_to_fix.append({
+									"original": child_table_name,
+									"fixed": child_fixed
+								})
+								frappe.logger().info(
+									f"[FIX_DOCTYPES] Found child table '{child_table_name}' that needs to be renamed to '{child_fixed}'"
+								)
+				
+				# Rename child tables first (before parent)
+				for child_table in child_tables_to_fix:
+					try:
+						# Check if child table DocType exists
+						if not frappe.db.exists("DocType", child_table["original"]):
+							frappe.logger().warning(
+								f"[FIX_DOCTYPES] Child table DocType '{child_table['original']}' does not exist. Skipping."
+							)
+							continue
+						
+						# Check if fixed name already exists
+						if frappe.db.exists("DocType", child_table["fixed"]):
+							frappe.logger().warning(
+								f"[FIX_DOCTYPES] Child table '{child_table['fixed']}' already exists. Skipping '{child_table['original']}'"
+							)
+							continue
+						
+						frappe.logger().info(
+							f"[FIX_DOCTYPES] Renaming child table '{child_table['original']}' to '{child_table['fixed']}'"
+						)
+						
+						# Rename child table DocType
+						frappe.rename_doc("DocType", child_table["original"], child_table["fixed"], force=True, merge=False, show_alert=False)
+						frappe.logger().info(
+							f"[FIX_DOCTYPES] Successfully renamed child table from '{child_table['original']}' to '{child_table['fixed']}'"
+						)
+						frappe.db.commit()
+						frappe.clear_cache(doctype=child_table["fixed"])
+					except Exception as child_error:
+						error_msg = f"Failed to rename child table '{child_table['original']}': {str(child_error)}"
+						frappe.logger().error(f"[FIX_DOCTYPES] {error_msg}")
+						frappe.log_error(
+							title=f"Failed to rename child table {child_table['original']}",
+							message=f"{error_msg}\nTraceback: {frappe.get_traceback()}"
+						)
+						# Continue anyway - try to rename parent
+				
+			except Exception as prep_error:
+				error_msg = f"Error preparing to rename '{original_name}': {str(prep_error)}"
+				frappe.logger().warning(f"[FIX_DOCTYPES] {error_msg}")
+				frappe.log_error(
+					title=f"Error preparing DocType rename {original_name}",
+					message=f"{error_msg}\nTraceback: {frappe.get_traceback()}"
+				)
+				# Continue to try renaming anyway
+			
+			# Now rename the parent DocType definition
+			try:
+				frappe.logger().info(f"[FIX_DOCTYPES] Starting rename process for '{original_name}' -> '{fixed_name}'")
+				
+				# Clear cache before rename
+				frappe.clear_cache(doctype=original_name)
+				frappe.clear_cache()
+				
+				# Let Frappe's rename_doc handle table renaming automatically
+				# It will rename both the DocType and all associated tables
+				frappe.logger().info(f"[FIX_DOCTYPES] Calling frappe.rename_doc for '{original_name}' -> '{fixed_name}'")
+				frappe.rename_doc("DocType", original_name, fixed_name, force=True, merge=False, show_alert=False)
+				fixed_count += 1
+				fixed_doctypes.append({
+					"original": original_name,
+					"fixed": fixed_name
+				})
+				frappe.logger().info(
+					f"[FIX_DOCTYPES] Successfully renamed DocType definition from '{original_name}' to '{fixed_name}'"
+				)
+				# Commit after each rename to ensure it's saved
+				frappe.db.commit()
+				# Clear cache after rename
+				frappe.clear_cache(doctype=fixed_name)
+				frappe.logger().info(f"[FIX_DOCTYPES] Completed rename for '{original_name}' -> '{fixed_name}'")
+			except Exception as rename_error:
+				error_msg = f"Failed to rename DocType '{original_name}' to '{fixed_name}': {str(rename_error)}"
+				error_details = {
+					"doctype": original_name,
+					"target": fixed_name,
+					"error": str(rename_error),
+					"traceback": frappe.get_traceback()
+				}
+				errors.append(error_details)
+				frappe.logger().error(f"[FIX_DOCTYPES] {error_msg}")
+				# Log to Error Log
+				frappe.log_error(
+					title=f"Failed to rename DocType {original_name}",
+					message=f"{error_msg}\nTraceback: {frappe.get_traceback()}"
+				)
+				# Also print to console for immediate visibility
+				print(f"[FIX_DOCTYPES ERROR] {error_msg}")
+				print(f"[FIX_DOCTYPES ERROR] Traceback: {frappe.get_traceback()}")
+		
+		# Clear cache to ensure changes are reflected
+		frappe.clear_cache()
+		
+		result = {
+			"status": "success" if fixed_count > 0 and len(errors) == 0 else ("partial" if fixed_count > 0 else "error"),
+			"message": f"Fixed {fixed_count} DocType definition(s) with -Local suffix",
+			"fixed_count": fixed_count,
+			"fixed_doctypes": fixed_doctypes,
+			"total_found": len(doctypes_to_fix) if doctypes_to_fix else 0,
+			"error_count": len(errors),
+			"skipped_count": len(skipped)
+		}
+		
+		if errors:
+			# Include first 10 errors in message, full list in errors array
+			error_summary = errors[:10]
+			result["errors"] = errors
+			result["error_summary"] = [f"{e.get('doctype', 'Unknown')}: {e.get('error', str(e))}" for e in error_summary]
+			result["message"] += f". {len(errors)} error(s) occurred."
+			if len(errors) > 10:
+				result["message"] += f" Showing first 10 errors. Check full error list for all {len(errors)} errors."
+		
+		if skipped:
+			result["skipped"] = skipped
+		
+		if fixed_count == 0 and len(doctypes_to_fix) > 0:
+			result["message"] += f" Found {len(doctypes_to_fix)} DocType(s) but none were fixed."
+			if errors:
+				result["message"] += f" {len(errors)} error(s) occurred. Check errors array for details."
+			if skipped:
+				result["message"] += f" {len(skipped)} skipped (target name already exists)."
+		
+		frappe.logger().info(f"[FIX_DOCTYPES] Final result: Fixed={fixed_count}, Errors={len(errors)}, Skipped={len(skipped)}")
+		if errors:
+			frappe.logger().error(f"[FIX_DOCTYPES] First 5 errors: {errors[:5]}")
+		
+		return result
+		
+	except Exception as e:
+		frappe.log_error(
+			title="Failed to fix renamed DocTypes",
+			message=f"Error fixing renamed DocTypes: {str(e)}\nTraceback: {frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to fix renamed DocTypes: {str(e)}",
+			"fixed_count": 0,
+			"fixed_doctypes": []
+		}
+

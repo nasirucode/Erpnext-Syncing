@@ -133,7 +133,7 @@ def queue_sync_job(
 			name=sync_name,
 			sync_type=sync_type,
 			document_data=document_data,
-			queue="default",
+			queue="short",
 			timeout=300,
 			is_async=True,
 			job_name=f"sync_{sync_doctype}_{sync_name}_{sync_type}"

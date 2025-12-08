@@ -12,6 +12,7 @@ from havano_sync.havano_sync.tasks.sync import (
 	get_sync_settings,
 	get_decrypted_api_secret
 )
+from havano_sync.havano_sync.tasks.utils import fix_field_options_with_local_suffix, fix_renamed_doctypes
 from havano_sync.havano_sync.utils.sync_api import SyncAPI
 
 
@@ -314,4 +315,63 @@ def get_installed_apps_info():
 			"site_info": {},
 			"error": str(e)
 		}
+
+
+@frappe.whitelist()
+def fix_field_options_local_suffix():
+	"""
+	API endpoint to fix field options that incorrectly reference doctypes with -Local suffix
+	This fixes database corruption where field options have doctype names with -Local suffix
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.fix_field_options_local_suffix
+	"""
+	return fix_field_options_with_local_suffix()
+
+
+@frappe.whitelist()
+def fix_renamed_doctypes_job():
+	"""
+	API endpoint to fix DocType definitions that were incorrectly renamed with -Local suffix
+	This fixes database corruption where DocType definitions have -Local suffix
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.fix_renamed_doctypes_job
+	"""
+	return fix_renamed_doctypes()
+
+
+@frappe.whitelist()
+def find_document_by_sync_reference(doctype: str, sync_reference: str, sync_type: str = "Local"):
+	"""
+	API endpoint to find a document by sync_reference field.
+	This is used by the remote server to help local server find documents.
+	
+	Args:
+		doctype: Document type to search
+		sync_reference: The sync_reference value to search for
+		sync_type: The sync_type value (default: "Local")
+	
+	Returns:
+		Document name if found, None otherwise
+	"""
+	try:
+		# Use frappe.get_all to find document by sync_reference
+		# This works locally but not via frappe.client.get_list (which has restrictions)
+		docs = frappe.get_all(
+			doctype,
+			filters={
+				"sync_reference": sync_reference,
+				"sync_type": sync_type
+			},
+			limit=1,
+			fields=["name"]
+		)
+		
+		if docs and len(docs) > 0:
+			return docs[0].name
+		return None
+	except Exception as e:
+		frappe.logger().error(f"Error finding document by sync_reference: {str(e)}")
+		return None
 
