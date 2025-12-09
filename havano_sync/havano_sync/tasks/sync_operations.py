@@ -126,15 +126,15 @@ def ensure_sync_fields_exist_on_remote(doctype: str, api_client: Any, settings: 
 			
 		except Exception as e:
 			frappe.log_error(
-				title="Failed to ensure sync fields on remote",
-				message=f"Could not ensure sync fields exist on remote doctype {doctype}: {str(e)}"
+				"Failed to ensure sync fields on remote",
+				f"Could not ensure sync fields exist on remote doctype {doctype}: {str(e)}"
 			)
 			return False
 			
 	except Exception as e:
 		frappe.log_error(
-			title="Failed to check/create sync fields",
-			message=f"Error checking/creating sync fields for {doctype}: {str(e)}"
+			"Failed to check/create sync fields",
+			f"Error checking/creating sync fields for {doctype}: {str(e)}"
 		)
 		return False
 
@@ -191,8 +191,8 @@ def handle_link_validation_error(
 			meta = frappe.get_meta(doctype)
 		except Exception:
 			frappe.log_error(
-				title="Failed to get meta for LinkValidationError handling",
-				message=f"Could not get meta for {doctype}: {str(error)}"
+				"Failed to get meta for LinkValidationError handling",
+				f"Could not get meta for {doctype}: {str(error)}"
 			)
 			return False
 		
@@ -225,7 +225,10 @@ def handle_link_validation_error(
 						})
 	
 	if not missing_docs:
-		frappe.logger().warning(f"Could not parse missing documents from LinkValidationError: {error_msg}")
+		frappe.log_error(
+			"Could not parse missing documents from LinkValidationError",
+			f"Could not parse missing documents from LinkValidationError: {error_msg}"
+		)
 		return False
 	
 	# Try to create each missing document
@@ -256,8 +259,8 @@ def handle_link_validation_error(
 						frappe.logger().info(f"Created missing document {link_doctype} {link_name} on remote from local")
 				except Exception as sync_error:
 					frappe.log_error(
-						title="Failed to sync missing document to remote",
-						message=f"Could not sync {link_doctype} {link_name} to remote: {str(sync_error)}"
+						"Failed to sync missing document to remote",
+						f"Could not sync {link_doctype} {link_name} to remote: {str(sync_error)}"
 					)
 			else:  # fetch direction - document already exists locally
 				doc_created = True
@@ -276,8 +279,8 @@ def handle_link_validation_error(
 						frappe.logger().info(f"Created missing document {link_doctype} {link_name} locally from remote")
 				except Exception as fetch_error:
 					frappe.log_error(
-						title="Failed to fetch missing document from remote",
-						message=f"Could not fetch {link_doctype} {link_name} from remote: {str(fetch_error)}"
+						"Failed to fetch missing document from remote",
+						f"Could not fetch {link_doctype} {link_name} from remote: {str(fetch_error)}"
 					)
 			else:  # send direction - document doesn't exist locally or remote
 				# For master doctypes, create a minimal document
@@ -301,22 +304,25 @@ def handle_link_validation_error(
 									frappe.logger().info(f"Created minimal master document {link_doctype} {link_name} on remote")
 							except Exception as sync_error:
 								frappe.log_error(
-									title="Failed to sync minimal master document to remote",
-									message=f"Could not sync minimal {link_doctype} {link_name} to remote: {str(sync_error)}"
+									"Failed to sync minimal master document to remote",
+									f"Could not sync minimal {link_doctype} {link_name} to remote: {str(sync_error)}"
 								)
 					except Exception as create_error:
 						frappe.log_error(
-							title="Failed to create minimal master document",
-							message=f"Could not create minimal {link_doctype} {link_name}: {str(create_error)}"
+							"Failed to create minimal master document",
+							f"Could not create minimal {link_doctype} {link_name}: {str(create_error)}"
 						)
 				else:
 					frappe.log_error(
-						title="Missing document not found",
-						message=f"Missing document {link_doctype} {link_name} does not exist locally or on remote. Cannot create."
+						"Missing document not found",
+						f"Missing document {link_doctype} {link_name} does not exist locally or on remote. Cannot create."
 					)
 		
 		if not doc_created:
-			frappe.logger().warning(f"Could not create missing document {link_doctype} {link_name}")
+			frappe.log_error(
+				f"Could not create missing document {link_doctype} {link_name}",
+				f"Could not create missing document {link_doctype} {link_name}"
+			)
 	
 	if created_count > 0:
 		frappe.logger().info(f"Created {created_count} missing document(s) for {doctype} {name}. Operation should be retried.")
@@ -424,7 +430,10 @@ def sync_linked_documents(
 					if doctype_name.endswith("-Local"):
 						original_doctype = doctype_name
 						doctype_name = doctype_name[:-6]  # Remove "-Local" (6 characters)
-						frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {original_doctype}. Using {doctype_name} instead.")
+						frappe.log_error(
+						f"Found doctype name with -Local suffix: {original_doctype}",
+						f"Found doctype name with -Local suffix in syncable doctypes: {original_doctype}. Using {doctype_name} instead."
+					)
 					enabled_doctypes.add(doctype_name)
 	
 	# Track link fields in the document and their remote names
@@ -476,7 +485,10 @@ def sync_linked_documents(
 					exists_on_remote = False
 				except Exception as e:
 					# Other error occurred - log but continue
-					frappe.logger().warning(f"Error checking if {link_doctype} {link_value} exists on remote: {str(e)}")
+					frappe.log_error(
+						f"Error checking if {link_doctype} {link_value} exists on remote",
+						f"Error checking if {link_doctype} {link_value} exists on remote: {str(e)}"
+					)
 					exists_on_remote = False
 				
 				# If document doesn't exist on remote, try to sync/fetch it
@@ -529,13 +541,16 @@ def sync_linked_documents(
 											api_client, link_doctype, link_value
 										) or link_value
 										link_field_mapping[(link_doctype, link_value)] = remote_doc_name
-										frappe.logger().warning(f"Linked document {link_doctype} {link_value} sync may have failed, using resolved name {remote_doc_name}")
+										frappe.log_error(
+										f"Linked document {link_doctype} {link_value} sync may have failed",
+										f"Linked document {link_doctype} {link_value} sync may have failed, using resolved name {remote_doc_name}"
+									)
 								else:  # fetch direction - but document exists locally, so no need to fetch
 									frappe.logger().info(f"Linked document {link_doctype} {link_value} exists locally, skipping fetch")
 							except Exception as sync_error:
 								frappe.log_error(
-									title="Failed to sync linked document",
-									message=f"Could not sync linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name}: {str(sync_error)}"
+									"Failed to sync linked document",
+									f"Could not sync linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name}: {str(sync_error)}"
 								)
 						else:
 							# Document doesn't exist locally either
@@ -550,19 +565,19 @@ def sync_linked_documents(
 										frappe.logger().info(f"Successfully fetched linked document {link_doctype} {link_value} from remote")
 									else:
 										frappe.log_error(
-											title="Failed to fetch linked document from remote",
-											message=f"Could not fetch linked document {link_doctype} {link_value} from remote: {fetch_result.get('message', 'Unknown error')}"
+											"Failed to fetch linked document from remote",
+											f"Could not fetch linked document {link_doctype} {link_value} from remote: {fetch_result.get('message', 'Unknown error')}"
 										)
 								except Exception as fetch_error:
 									frappe.log_error(
-										title="Failed to fetch linked document from remote",
-										message=f"Could not fetch linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name}: {str(fetch_error)}"
+										"Failed to fetch linked document from remote",
+										f"Could not fetch linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name}: {str(fetch_error)}"
 									)
 							else:  # send direction
 								# Document doesn't exist locally or on remote - can't sync it
 								frappe.log_error(
-									title="Linked document not found",
-									message=f"Linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name} does not exist locally or on remote. Cannot sync."
+									"Linked document not found",
+									f"Linked document {link_doctype} {link_value} referenced by {doc.doctype} {doc.name} does not exist locally or on remote. Cannot sync."
 								)
 	
 	# Also check child table link fields
@@ -598,7 +613,10 @@ def sync_linked_documents(
 								except (DocumentNotFoundError, requests.exceptions.HTTPError) as e:
 									exists_on_remote = False
 								except Exception as e:
-									frappe.logger().warning(f"Error checking if {link_doctype} {link_value} exists on remote: {str(e)}")
+									frappe.log_error(
+										f"Error checking if {link_doctype} {link_value} exists on remote",
+										f"Error checking if {link_doctype} {link_value} exists on remote: {str(e)}"
+									)
 									exists_on_remote = False
 								
 								# If document doesn't exist on remote, try to sync/fetch it
@@ -637,8 +655,8 @@ def sync_linked_documents(
 													frappe.logger().info(f"Linked document {link_doctype} {link_value} from child table exists locally, skipping fetch")
 											except Exception as sync_error:
 												frappe.log_error(
-													title="Failed to sync linked document from child table",
-													message=f"Could not sync linked document {link_doctype} {link_value} from {field.fieldname} in {doc.doctype} {doc.name}: {str(sync_error)}"
+													"Failed to sync linked document from child table",
+													f"Could not sync linked document {link_doctype} {link_value} from {field.fieldname} in {doc.doctype} {doc.name}: {str(sync_error)}"
 												)
 										else:
 											# Document doesn't exist locally either
@@ -652,13 +670,13 @@ def sync_linked_documents(
 														frappe.logger().info(f"Successfully fetched linked document {link_doctype} {link_value} from child table")
 												except Exception as fetch_error:
 													frappe.log_error(
-														title="Failed to fetch linked document from child table",
-														message=f"Could not fetch linked document {link_doctype} {link_value} from {field.fieldname}: {str(fetch_error)}"
+														"Failed to fetch linked document from child table",
+														f"Could not fetch linked document {link_doctype} {link_value} from {field.fieldname}: {str(fetch_error)}"
 													)
 											else:  # send direction
 												frappe.log_error(
-													title="Linked document from child table not found",
-													message=f"Linked document {link_doctype} {link_value} from {field.fieldname} in {doc.doctype} {doc.name} does not exist locally or on remote"
+													"Linked document from child table not found",
+													f"Linked document {link_doctype} {link_value} from {field.fieldname} in {doc.doctype} {doc.name} does not exist locally or on remote"
 												)
 	
 	# Return the mapping of local names to remote names
@@ -698,17 +716,182 @@ def sync_document_to_remote(
 		api_client = SyncAPI(target_url, api_key, api_secret)
 		
 		# Get the document
-		# Handle case where document might have been renamed with -Local suffix
+		# Handle case where document might have been renamed with -Local suffix (for non-Sales Invoice/Payment Entry)
+		# For Sales Invoice and Payment Entry with naming series, ensure we use the renamed name
 		actual_name = name
-		if not frappe.db.exists(doctype, name):
-			# Check if document exists with -Local suffix
-			if not name.endswith("-Local"):
-				local_name = f"{name}-Local"
-				if frappe.db.exists(doctype, local_name):
-					actual_name = local_name
-					frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {actual_name}")
+		if doctype in ("Sales Invoice", "Payment Entry"):
+			# For Sales Invoice and Payment Entry, check if naming series is configured
+			# If so, the document should have been renamed with the naming series
+			# We should only sync if the document has been renamed (name matches naming series pattern)
+			if settings:
+				naming_series_to_check = None
+				if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+					naming_series_to_check = settings.payment_entry_naming_series
+				elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+					naming_series_to_check = settings.sales_invoice_naming_series
+				
+				if naming_series_to_check:
+					# Check if document exists with current name
+					if not frappe.db.exists(doctype, name):
+						# Document doesn't exist with this name - might have been renamed
+						# Try to find the renamed document by searching for recent documents with naming series pattern
+						import re
+						# Extract pattern from naming series (e.g., "ACC-SINV-.YYYY.-" -> "ACC-SINV-")
+						# or "ACC-SINV-STORE1-.YYYY.-" -> "ACC-SINV-STORE1-"
+						pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
+						if pattern_match:
+							prefix = pattern_match.group(1).rstrip('-')
+							# Find documents with this prefix that were created recently and have sync_type = Local
+							table_name = f"tab{doctype}"
+							recent_docs = frappe.db.sql(f"""
+								SELECT name FROM `{table_name}`
+								WHERE name LIKE %s
+								AND name != %s
+								AND sync_type = 'Local'
+								AND creation >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+								ORDER BY creation DESC
+								LIMIT 1
+							""", (prefix + '%', name), as_dict=True)
+							
+							if recent_docs:
+								actual_name = recent_docs[0].name
+								# Verify the renamed document has sync_type="Local" before using it
+								if frappe.db.has_column(doctype, 'sync_type'):
+									renamed_sync_type = frappe.db.get_value(doctype, actual_name, 'sync_type')
+									if renamed_sync_type == "Remote":
+										frappe.log_error(
+											f"[SYNC] Found renamed document {doctype} {actual_name} but sync_type='Remote'",
+											f"[SYNC] Found renamed document {doctype} {actual_name} but it has sync_type='Remote'. Skipping sync."
+										)
+										return {
+											"status": "skipped",
+											"doctype": doctype,
+											"name": name,
+											"message": f"Document {doctype} {name} was renamed to {actual_name} but it has sync_type='Remote' and should not be synced to remote"
+										}
+								frappe.log_error(
+									f"[SYNC] Found renamed document {doctype} {actual_name}",
+									f"Found renamed document {doctype} {actual_name} by pattern matching (was {name})"
+								)
+							else:
+								# Could not find renamed document - skip sync
+								frappe.log_error(
+									f"[SYNC] Document {doctype} {name} not found",
+									f"[SYNC] Document {doctype} {name} not found and could not find renamed version (no recent documents with pattern {prefix}%)"
+								)
+								return {
+									"status": "skipped",
+									"doctype": doctype,
+									"name": name,
+									"message": f"Document {doctype} {name} not found. It may have been renamed with naming series. Sync will happen after rename completes."
+								}
+						else:
+							# Could not parse naming series pattern
+							frappe.log_error(
+								f"[SYNC] Document {doctype} {name} not found - could not parse naming series",
+								f"[SYNC] Document {doctype} {name} not found and could not parse naming series pattern"
+							)
+							return {
+								"status": "skipped",
+								"doctype": doctype,
+								"name": name,
+								"message": f"Document {doctype} {name} not found. It may have been renamed with naming series. Sync will happen after rename completes."
+							}
+					else:
+						# Document exists - check if the name matches the expected naming series pattern
+						# Extract prefix from naming series (e.g., "ACC-SINV-STORE2-.YYYY.-" -> "ACC-SINV-STORE2-")
+						import re
+						pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
+						if pattern_match:
+							expected_prefix = pattern_match.group(1).rstrip('-')
+							# Check if document name starts with the expected prefix
+							if name.startswith(expected_prefix):
+								# Name matches the expected pattern - proceed with sync
+								actual_name = name
+								frappe.log_error(
+									f"[SYNC] Document {doctype} {name} name matches expected naming series pattern {expected_prefix}",
+									f"[SYNC] Document {doctype} {name} name matches expected naming series pattern. Proceeding with sync."
+								)
+							else:
+								# Name doesn't match pattern - document hasn't been renamed yet
+								doc_check = frappe.get_doc(doctype, name)
+								current_naming_series = doc_check.get('naming_series', '')
+								frappe.log_error(
+									f"[SYNC] Document {doctype} {name} name does not match expected naming series pattern",
+									f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Name doesn't match pattern {expected_prefix}. Skipping sync - rename should queue sync."
+								)
+								return {
+									"status": "skipped",
+									"doctype": doctype,
+									"name": name,
+									"message": f"Document {doctype} {name} has not been renamed with naming series yet. Sync will happen after rename completes."
+								}
+						else:
+							# Could not parse naming series pattern - check naming_series field as fallback
+							doc_check = frappe.get_doc(doctype, name)
+							current_naming_series = doc_check.get('naming_series', '')
+							if current_naming_series != naming_series_to_check:
+								frappe.log_error(
+									f"[SYNC] Document {doctype} {name} naming_series field does not match",
+									f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Skipping sync - rename should queue sync."
+								)
+								return {
+									"status": "skipped",
+									"doctype": doctype,
+									"name": name,
+									"message": f"Document {doctype} {name} has not been renamed with naming series yet. Sync will happen after rename completes."
+								}
+							actual_name = name
+		else:
+			# For other doctypes, check for -Local suffix
+			if not frappe.db.exists(doctype, name):
+				if not name.endswith("-Local"):
+					local_name = f"{name}-Local"
+					if frappe.db.exists(doctype, local_name):
+						actual_name = local_name
+						frappe.log_error(
+							f"Document {doctype} {name} not found, using renamed name {actual_name}",
+							f"Document {doctype} {name} not found, using renamed name {actual_name}"
+						)
 		
-		doc = frappe.get_doc(doctype, actual_name)
+		try:
+			doc = frappe.get_doc(doctype, actual_name)
+		except Exception as get_doc_error:
+			frappe.log_error(
+				f"[SYNC] Failed to get document {doctype} {actual_name}",
+				f"[SYNC] Failed to get document {doctype} {actual_name}: {str(get_doc_error)}\nTraceback: {frappe.get_traceback()}"
+			)
+			raise
+		
+		# CRITICAL: Never sync documents with sync_type="Remote" to remote
+		# These documents came from remote, so they should not be synced back
+		doc_sync_type = getattr(doc, 'sync_type', None)
+		if doc_sync_type == "Remote":
+			frappe.log_error(
+				f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote'",
+				f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote' (document came from remote)"
+			)
+			return {
+				"status": "skipped",
+				"doctype": doctype,
+				"name": actual_name,
+				"message": f"Document {doctype} {actual_name} has sync_type='Remote' and should not be synced to remote (it came from remote)"
+			}
+		
+		# Also check sync_type from database if not in document object
+		if frappe.db.has_column(doctype, 'sync_type'):
+			db_sync_type = frappe.db.get_value(doctype, actual_name, 'sync_type')
+			if db_sync_type == "Remote":
+				frappe.logger().info(f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote' (document came from remote)")
+				return {
+					"status": "skipped",
+					"doctype": doctype,
+					"name": actual_name,
+					"message": f"Document {doctype} {actual_name} has sync_type='Remote' and should not be synced to remote (it came from remote)"
+				}
+			elif db_sync_type:
+				frappe.logger().info(f"[SYNC] Document {doctype} {actual_name} has sync_type='{db_sync_type}' from database")
+		
 		
 		# Check company filter if specified in settings
 		if settings:
@@ -725,6 +908,18 @@ def sync_document_to_remote(
 						"message": f"Document belongs to different company (not {company}). Skipping sync."
 					}
 		
+		# Handle naming series renaming for Payment Entry and Sales Invoice
+		# Rename the document locally using the configured naming series, then sync with the new name
+		naming_series_to_use = None
+		if settings:
+			if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+				naming_series_to_use = settings.payment_entry_naming_series
+			elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+				naming_series_to_use = settings.sales_invoice_naming_series
+		
+		# For Sales Invoice and Payment Entry, set naming series in doc_data for remote to use
+		# Do NOT rename the document locally - keep original name and let remote use the naming series
+		
 		# Sync linked documents first (dependencies) - for send direction
 		# This ensures all referenced documents exist on the remote server
 		# Skip if this is already a dependency sync (to avoid infinite recursion)
@@ -737,8 +932,8 @@ def sync_document_to_remote(
 			except Exception as e:
 				# Log but don't fail - we'll try to sync anyway
 				frappe.log_error(
-					title="Error syncing linked documents",
-					message=f"Error syncing linked documents for {doctype} {name}: {str(e)}"
+					"Error syncing linked documents",
+					f"Error syncing linked documents for {doctype} {name}: {str(e)}"
 				)
 		
 		# Ensure sync fields exist on remote for syncable and compulsory doctypes
@@ -747,37 +942,48 @@ def sync_document_to_remote(
 		except Exception as e:
 			# Log but don't fail - we'll try to sync anyway
 			frappe.log_error(
-				title="Failed to ensure sync fields",
-				message=f"Could not ensure sync fields exist on remote for {doctype}: {str(e)}"
+				"Failed to ensure sync fields",
+				f"Could not ensure sync fields exist on remote for {doctype}: {str(e)}"
 			)
 		
 		# Prepare document data
 		doc_data = prepare_doc_for_sync(doc)
 		doc_data['doctype'] = doctype
 		
-		# Ensure the name field is always included with -Local suffix
-		# Use actual_name which may have -Local suffix (this is the correct name to use)
-		current_doc_name = actual_name  # Use actual_name consistently
+		# Set the name field in doc_data
+		# Always use actual_name (original name, not renamed)
+		# For other doctypes, actual_name may have -Local suffix
+		current_doc_name = actual_name
+		
 		doc_data['name'] = current_doc_name
-		frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name} (actual_name was: {actual_name}, doc.name is: {doc.name if hasattr(doc, 'name') else 'N/A'})")
+		frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name}")
 		
 		# For submittable doctypes, ensure docstatus is set correctly BEFORE setting sync fields
 		# This ensures the document is synced with the correct status (submitted = 1, draft = 0)
-		# For non-submittable doctypes, ensure docstatus is 0 or not set
+		# IMPORTANT: Always use the actual docstatus from the document object, not from doc_data
 		if is_submittable_doctype(doctype):
-			if hasattr(doc, 'docstatus'):
-				doc_data['docstatus'] = doc.docstatus
-				frappe.logger().info(f"Set docstatus={doc.docstatus} for submittable doctype {doctype} {current_doc_name}")
+			# Always get docstatus directly from the document object
+			docstatus_value = getattr(doc, 'docstatus', None)
+			if docstatus_value is not None:
+				doc_data['docstatus'] = docstatus_value
+				frappe.logger().info(f"Set docstatus={docstatus_value} for submittable doctype {doctype} {current_doc_name} (from document object)")
+			elif 'docstatus' in doc_data:
+				# Use docstatus from doc_data if document doesn't have it
+				frappe.logger().info(f"Using docstatus={doc_data['docstatus']} from doc_data for {doctype} {current_doc_name}")
 			else:
-				# If docstatus not in doc, check if it's in doc_data from prepare_doc_for_sync
-				if 'docstatus' not in doc_data:
-					# Default to draft (0) if not specified
-					doc_data['docstatus'] = 0
-					frappe.logger().warning(f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)")
+				# Default to draft (0) if not specified
+				doc_data['docstatus'] = 0
+				frappe.log_error(
+					f"docstatus not found for {doctype} {current_doc_name}",
+					f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)"
+				)
 		else:
 			# For non-submittable doctypes, ensure docstatus is 0 or not set
 			if 'docstatus' in doc_data and doc_data.get('docstatus') == 1:
-				frappe.logger().warning(f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0.")
+				frappe.log_error(
+					f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable",
+					f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0."
+				)
 				doc_data['docstatus'] = 0
 		
 		# Update link field references to use remote names
@@ -810,7 +1016,66 @@ def sync_document_to_remote(
 						doc_data[field.fieldname] = remote_name
 						frappe.logger().info(f"Updated link field {field.fieldname} from {link_value} to {remote_name} for {doctype} {name}")
 					elif not remote_name:
-						frappe.logger().warning(f"Could not resolve remote name for linked document {link_doctype} {link_value} in field {field.fieldname}. Using local name.")
+						# For critical links like Customer in Sales Invoice, ensure the document exists on remote
+						# If it doesn't exist, try to sync it or create a minimal version
+						if link_doctype == "Customer" and doctype in ("Sales Invoice", "Payment Entry", "Sales Order"):
+							# Customer is critical for Sales Invoice - ensure it exists on remote
+							try:
+								# Check if customer exists on remote by name
+								try:
+									remote_customer = api_client.get_document("Customer", link_value)
+									if remote_customer:
+										# Customer exists with same name, use it
+										doc_data[field.fieldname] = link_value
+										frappe.logger().info(f"Customer {link_value} exists on remote with same name, using it for {doctype} {name}")
+										continue
+								except (DocumentNotFoundError, requests.exceptions.HTTPError):
+									# Customer doesn't exist, try to sync it
+									if frappe.db.exists("Customer", link_value):
+										frappe.log_error(
+										f"Customer {link_value} not found on remote for {doctype} {name}",
+										f"Customer {link_value} not found on remote for {doctype} {name}. Attempting to sync customer first."
+									)
+										# Sync the customer first
+										customer_sync_result = sync_document_to_remote(
+											"Customer", link_value, target_url, api_key, api_secret, 
+											force_create=True, sync_method="Auto", settings=settings
+										)
+										if customer_sync_result and customer_sync_result.get("status") == "success":
+											# Try to resolve again after syncing
+											remote_name = resolve_remote_document_name_by_sync_reference(
+												api_client, "Customer", link_value
+											) or link_value
+											doc_data[field.fieldname] = remote_name
+											frappe.logger().info(f"Synced customer {link_value} to remote, using {remote_name} for {doctype} {name}")
+										else:
+											frappe.log_error(
+												"Failed to sync customer before Sales Invoice",
+												f"Could not sync customer {link_value} to remote before syncing {doctype} {name}. Customer sync result: {customer_sync_result}"
+											)
+											# Use local name as fallback
+											doc_data[field.fieldname] = link_value
+									else:
+										frappe.log_error(
+											"Customer not found",
+											f"Customer {link_value} referenced by {doctype} {name} does not exist locally or on remote."
+										)
+										# Use local name as fallback
+										doc_data[field.fieldname] = link_value
+							except Exception as customer_error:
+								frappe.log_error(
+									"Error ensuring customer exists on remote",
+									f"Error ensuring customer {link_value} exists on remote for {doctype} {name}: {str(customer_error)}"
+								)
+								# Use local name as fallback
+								doc_data[field.fieldname] = link_value
+						else:
+							frappe.log_error(
+								f"Could not resolve remote name for {link_doctype} {link_value}",
+								f"Could not resolve remote name for linked document {link_doctype} {link_value} in field {field.fieldname}. Using local name."
+							)
+							# Use local name as fallback
+							doc_data[field.fieldname] = link_value
 		
 		# Also update link fields in child tables
 		for field in doc.meta.fields:
@@ -847,7 +1112,10 @@ def sync_document_to_remote(
 											child_row[child_field.fieldname] = remote_name
 											frappe.logger().info(f"Updated child table link field {child_field.fieldname} from {link_value} to {remote_name} in {field.fieldname}")
 										elif not remote_name:
-											frappe.logger().warning(f"Could not resolve remote name for linked document {link_doctype} {link_value} in child field {child_field.fieldname}. Using local name.")
+											frappe.log_error(
+												f"Could not resolve remote name for {link_doctype} {link_value} in child field",
+												f"Could not resolve remote name for linked document {link_doctype} {link_value} in child field {child_field.fieldname}. Using local name."
+											)
 		
 		# For all syncable and compulsory doctypes, add sync_reference and sync_type
 		# Check if doctype is syncable or compulsory
@@ -855,18 +1123,65 @@ def sync_document_to_remote(
 		is_compulsory = doctype in auto_sync_doctypes
 		is_syncable = should_sync_doctype(doctype, settings, direction="send") if settings else False
 		
+		# Ensure naming series exists on remote and in options, and set it in doc_data
+		if naming_series_to_use:
+			try:
+				from havano_sync.havano_sync.tasks.remote_field_management import (
+					ensure_naming_series_on_remote,
+					ensure_naming_series_in_doctype_options
+				)
+				
+				# Ensure naming series pattern is available on remote
+				naming_series_exists = ensure_naming_series_on_remote(
+					naming_series_to_use, api_client, target_url, api_key, api_secret, settings
+				)
+				if naming_series_exists:
+					# Ensure it's in the doctype options
+					ensure_naming_series_in_doctype_options(doctype, naming_series_to_use, api_client)
+					frappe.logger().info(f"Ensured naming series {naming_series_to_use} is available on remote for {doctype} {actual_name}")
+					
+					# Set naming series in document data - remote will use this naming series
+					doc_data['naming_series'] = naming_series_to_use
+					frappe.logger().info(f"Set naming_series to {naming_series_to_use} in document data for {doctype} {actual_name}")
+				else:
+					frappe.log_error(
+						f"Could not ensure naming series {naming_series_to_use} exists on remote",
+						f"Could not ensure naming series {naming_series_to_use} exists on remote for {doctype} {actual_name}."
+					)
+			except Exception as e:
+				frappe.log_error(
+					"Failed to ensure naming series on remote",
+					f"Could not ensure naming series {naming_series_to_use} exists on remote for {doctype} {actual_name}: {str(e)}"
+				)
+		else:
+			# Use the current naming series from the document if no override is configured
+			current_naming_series = doc.get('naming_series', '')
+			if current_naming_series:
+				doc_data['naming_series'] = current_naming_series
+		
 		if is_compulsory or is_syncable:
-			# Set sync_reference to local document name (use actual_name which may have -Local suffix)
-			doc_data['sync_reference'] = actual_name
+			# Set sync_reference to local document name (use current_doc_name which is the renamed name)
+			# For Sales Invoice and Payment Entry with naming series, current_doc_name should be the renamed name
+			# For other doctypes, current_doc_name may have -Local suffix
+			# IMPORTANT: Use current_doc_name to ensure we use the renamed name after rename completes
+			doc_data['sync_reference'] = current_doc_name
 			# Set sync_type to "Local" (since this is being sent from local)
 			doc_data['sync_type'] = "Local"
 			# Note: docstatus is already set above for submittable doctypes, so we don't need to set it again here
+		else:
+			frappe.log_error(
+				f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable",
+				f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable - sync_reference and sync_type will NOT be set"
+			)
 		
 		# Clean up None values and empty strings that might cause issues
 		# Convert None to empty string for string fields, remove None from dict
 		# IMPORTANT: Preserve docstatus for submittable doctypes (0 or 1, not None)
+		# IMPORTANT: Preserve critical link fields like customer, party, etc.
 		def clean_data(data):
 			"""Recursively clean data to remove None values that might cause issues"""
+			# Critical fields that should never be removed even if None
+			critical_fields = {'customer', 'party', 'supplier', 'company', 'naming_series', 'docstatus'}
 			if isinstance(data, dict):
 				cleaned = {}
 				for k, v in data.items():
@@ -876,6 +1191,14 @@ def sync_document_to_remote(
 						if k == 'docstatus' and is_submittable_doctype(doctype):
 							cleaned[k] = 0  # Default to draft if None
 							continue
+						# Preserve critical fields even if None (they might be set later)
+						if k in critical_fields:
+							# For critical link fields, keep them if they exist in the original doc
+							if k in ('customer', 'party', 'supplier') and hasattr(doc, k):
+								original_value = getattr(doc, k, None)
+								if original_value:
+									cleaned[k] = original_value
+									continue
 						continue
 					elif isinstance(v, (dict, list)):
 						cleaned[k] = clean_data(v)
@@ -899,12 +1222,50 @@ def sync_document_to_remote(
 			elif 'docstatus' not in doc_data:
 				# If docstatus not found, default to draft (0)
 				doc_data['docstatus'] = 0
-				frappe.logger().warning(f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)")
+				frappe.log_error(
+					f"docstatus not found for {doctype} {current_doc_name}",
+					f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)"
+				)
 		else:
 			# For non-submittable doctypes, ensure docstatus is 0
 			if 'docstatus' in doc_data and doc_data.get('docstatus') == 1:
-				frappe.logger().warning(f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0 after cleaning.")
+				frappe.log_error(
+					f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable (after cleaning)",
+					f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0 after cleaning."
+				)
 				doc_data['docstatus'] = 0
+		
+		# Validate critical fields after cleaning
+		# For Sales Invoice, Payment Entry, and Sales Order, ensure customer is set
+		if doctype in ("Sales Invoice", "Payment Entry", "Sales Order"):
+			customer_field = doc_data.get('customer') or doc_data.get('party')
+			if not customer_field or customer_field in (None, "", "None", "null"):
+				# Try to get from doc if not in doc_data
+				customer_field = doc.get('customer') or doc.get('party')
+				if customer_field:
+					# Determine which field name to use
+					if 'customer' in doc.as_dict():
+						doc_data['customer'] = customer_field
+					elif 'party' in doc.as_dict():
+						doc_data['party'] = customer_field
+					else:
+						# Default to customer for Sales Invoice and Sales Order
+						if doctype in ("Sales Invoice", "Sales Order"):
+							doc_data['customer'] = customer_field
+						else:
+							doc_data['party'] = customer_field
+					frappe.logger().info(f"Restored customer/party field {customer_field} for {doctype} {actual_name} after cleaning")
+				else:
+					frappe.log_error(
+						f"Missing customer for {doctype}",
+						f"{doctype} {actual_name} has no customer/party field set. Cannot sync without customer."
+					)
+					return {
+						"status": "failed",
+						"doctype": doctype,
+						"name": name,
+						"message": f"Cannot sync {doctype} without customer/party field"
+					}
 		
 		# Check if document exists on remote BEFORE setting name in doc_data
 		# This prevents duplicates and ensures we update the correct document
@@ -985,68 +1346,83 @@ def sync_document_to_remote(
 			doc_data['name'] = remote_document_name
 			frappe.logger().info(f"Updating existing document {doctype} {remote_document_name} (local name: {actual_name})")
 		else:
-			# For new documents, use the local name (with -Local suffix if applicable)
-			# But first check if a document with this name already exists on remote
-			# This prevents creating duplicates if the name already exists
+			# For new documents, check if document exists by name OR by sync_reference
+			# This prevents creating duplicates
+			doc_data['name'] = current_doc_name
 			try:
-				existing_by_name = api_client.get_document(doctype, current_doc_name)
-				# Document with this name already exists - update it instead
+				# First check by name
+				api_client.get_document(doctype, current_doc_name)
 				doc_exists = True
 				remote_document_name = current_doc_name
-				doc_data['name'] = remote_document_name
-				frappe.logger().warning(f"Document {doctype} {current_doc_name} already exists on remote, will update instead of creating")
-			except Exception as e:
-				# Check if it's a document not found error (404 or DocumentNotFoundError)
-				is_not_found = False
-				if isinstance(e, requests.exceptions.HTTPError) and e.response and e.response.status_code == 404:
-					is_not_found = True
-				elif isinstance(e, DocumentNotFoundError):
-					is_not_found = True
-				
-				if is_not_found:
-					# Document doesn't exist - safe to create
-					doc_data['name'] = current_doc_name
-					frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
+				frappe.logger().info(f"Document {doctype} {current_doc_name} exists by name, will update")
+			except (DocumentNotFoundError, requests.exceptions.HTTPError):
+				# Not found by name, check by sync_reference
+				if is_compulsory or is_syncable:
+					# Check by actual_name (local document name)
+					remote_name_by_ref = api_client.find_document_by_sync_reference(doctype, actual_name, sync_type="Local")
+					if remote_name_by_ref:
+						doc_exists = True
+						remote_document_name = remote_name_by_ref
+						doc_data['name'] = remote_name_by_ref
+						frappe.logger().info(f"Document {doctype} found by sync_reference {actual_name} as {remote_name_by_ref}, will update")
+					else:
+						# Also check by the sync_reference value we're about to set (in case it's different)
+						sync_ref_value = doc_data.get('sync_reference')
+						if sync_ref_value and sync_ref_value != actual_name:
+							remote_name_by_ref2 = api_client.find_document_by_sync_reference(doctype, sync_ref_value, sync_type="Local")
+							if remote_name_by_ref2:
+								doc_exists = True
+								remote_document_name = remote_name_by_ref2
+								doc_data['name'] = remote_name_by_ref2
+								frappe.logger().info(f"Document {doctype} found by sync_reference {sync_ref_value} as {remote_name_by_ref2}, will update")
+							else:
+								doc_exists = False
+								frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
+						else:
+							doc_exists = False
+							frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
 				else:
-					# Other error - log and still try to create
-					frappe.logger().warning(f"Unexpected error checking if document exists: {str(e)}")
-					doc_data['name'] = current_doc_name
-					frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name} despite error")
+					doc_exists = False
+					frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
 		
 		# Create or update document
+		action = None  # Initialize action variable
 		if doc_exists and not force_create:
-			# Use the remote document's name for the update
-			# This is critical - we must use the remote name, not the local name
-			update_name = doc_data.get('name')  # Use the name we set in doc_data (which is the remote name)
-			if not update_name:
-				update_name = remote_document_name if 'remote_document_name' in locals() else name
+			update_name = doc_data.get('name') or remote_document_name or name
 			try:
-				result = api_client.update_document(doctype, update_name, doc_data)
-				action = "updated"
+				# Verify document exists before updating
+				try:
+					api_client.get_document(doctype, update_name)
+				except (DocumentNotFoundError, requests.exceptions.HTTPError) as e:
+					if isinstance(e, requests.exceptions.HTTPError) and e.response and e.response.status_code == 404:
+						# Document doesn't exist, try to create instead
+						frappe.log_error(
+							f"[SYNC] Document {doctype} {update_name} not found",
+							f"Document {doctype} {update_name} not found, creating instead"
+						)
+						doc_exists = False
+					else:
+						raise
+				
+				if doc_exists:
+					result = api_client.update_document(doctype, update_name, doc_data)
+					action = "updated"
 			except requests.exceptions.HTTPError as update_error:
-				# Check if it's a LinkValidationError
 				error_str = str(update_error)
 				if "LinkValidationError" in error_str or "Could not find" in error_str:
-					# Try to handle missing linked documents
-					frappe.logger().info(f"LinkValidationError detected during update for {doctype} {name}, attempting to create missing documents")
 					handled = handle_link_validation_error(
 						update_error, doctype, name, api_client, settings,
 						target_url, api_key, api_secret, direction="send"
 					)
 					if handled:
-						# Retry the update operation - use update_name (remote document name)
 						try:
 							result = api_client.update_document(doctype, update_name, doc_data)
 							action = "updated"
-							frappe.logger().info(f"Successfully updated {doctype} {update_name} after handling LinkValidationError")
-						except Exception as retry_error:
-							# If retry still fails, raise the original error
+						except Exception:
 							raise update_error
 					else:
-						# Could not handle the error, raise it
 						raise update_error
 				else:
-					# Re-raise other errors
 					raise
 		else:
 			# For new documents, name is already set above to current_doc_name
@@ -1070,7 +1446,10 @@ def sync_document_to_remote(
 					# Default to draft if not specified
 					original_docstatus = 0
 					doc_data['docstatus'] = 0
-					frappe.logger().warning(f"Submittable doctype {doctype} {current_doc_name} has no docstatus, defaulting to 0 (draft)")
+					frappe.log_error(
+						f"Submittable doctype {doctype} {current_doc_name} has no docstatus",
+						f"Submittable doctype {doctype} {current_doc_name} has no docstatus, defaulting to 0 (draft)"
+					)
 				
 			# If docstatus is 1, try to create directly with docstatus=1 first
 			if is_submittable_doctype(doctype):
@@ -1086,7 +1465,10 @@ def sync_document_to_remote(
 				# For non-submittable doctypes, ensure docstatus is 0
 				if 'docstatus' in doc_data and doc_data.get('docstatus') == 1:
 					# If docstatus is 1 but doctype is not submittable, set to 0
-					frappe.logger().warning(f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0.")
+					frappe.log_error(
+						f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable",
+						f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0."
+					)
 					doc_data['docstatus'] = 0
 				elif 'docstatus' not in doc_data:
 					doc_data['docstatus'] = 0
@@ -1106,7 +1488,10 @@ def sync_document_to_remote(
 					except Exception as create_error:
 						error_str = str(create_error)
 						# If creation with docstatus=1 fails, fall back to creating as draft
-						frappe.logger().warning(f"Failed to create {doctype} {current_doc_name} with docstatus=1: {error_str}. Falling back to create as draft then submit.")
+						frappe.log_error(
+							f"Failed to create {doctype} {current_doc_name} with docstatus=1",
+							f"Failed to create {doctype} {current_doc_name} with docstatus=1: {error_str}. Falling back to create as draft then submit."
+						)
 						# Set docstatus to 0 for draft creation
 						doc_data['docstatus'] = 0
 						needs_submit = True
@@ -1160,9 +1545,6 @@ def sync_document_to_remote(
 					result = api_client.create_document(doctype, doc_data)
 					action = "created"
 				
-				# Log the result structure for debugging
-				frappe.logger().info(f"Create document result for {doctype} {actual_name}: {result}")
-				
 				# After creating, check if remote used the name we sent or generated a new one
 				# If remote generated a new name, we need to rename it to match our local name (with -Local suffix)
 				# Frappe API returns the document dict directly, or wrapped in 'message'
@@ -1188,20 +1570,19 @@ def sync_document_to_remote(
 				# For submittable doctypes created as draft, sync_reference is set before submitting
 				if (is_compulsory or is_syncable) and created_name:
 					try:
-						# Use current_doc_name (local name with -Local suffix) for sync_reference
+						# Use actual_name (renamed name from local) for sync_reference
 						# This allows us to find the remote document by searching for sync_reference
-							update_data = {
-							'sync_reference': current_doc_name,
-								'sync_type': 'Local'
-							}
-							api_client.update_document(doctype, created_name, update_data)
-							frappe.logger().info(f"Set sync_reference={current_doc_name} and sync_type=Local on remote {doctype} {created_name}")
+						update_data = {
+							'sync_reference': current_doc_name,  # Use current_doc_name which is the renamed name from local
+							'sync_type': 'Local'
+						}
+						api_client.update_document(doctype, created_name, update_data)
+						frappe.logger().info(f"Set sync_reference={current_doc_name} and sync_type=Local on remote {doctype} {created_name}")
 					except Exception as update_error:
 						frappe.log_error(
-							title="Failed to set sync_reference on remote document",
-							message=f"Could not set sync_reference on remote {doctype} {created_name}: {str(update_error)}"
+							"Failed to set sync_reference on remote document",
+							f"Could not set sync_reference on remote {doctype} {created_name}: {str(update_error)}"
 						)
-						frappe.logger().warning(f"Could not set sync_reference on remote {doctype} {created_name}: {str(update_error)}")
 				
 				# For submittable doctypes that were created as draft, queue submit in background after a short delay
 				# This avoids errors from trying to submit too quickly after creation
@@ -1223,12 +1604,80 @@ def sync_document_to_remote(
 					frappe.logger().info(f"Queued submit for {doctype} {created_name} to run after 5 seconds")
 				elif needs_submit and created_name and not is_submittable_doctype(doctype):
 					# This shouldn't happen, but log a warning if it does
-					frappe.logger().warning(f"Attempted to submit non-submittable doctype {doctype} {created_name}. Skipping submit.")
+					frappe.log_error(
+						f"Attempted to submit non-submittable doctype {doctype} {created_name}",
+						f"Attempted to submit non-submittable doctype {doctype} {created_name}. Skipping submit."
+					)
 			except DuplicateEntryError:
-				# Document already exists - treat as success and update it instead
-				frappe.logger().info(f"Document {doctype} {name} already exists on remote. Updating instead.")
-				result = api_client.update_document(doctype, name, doc_data)
-				action = "updated"
+				# Document already exists - find it and update instead
+				# The duplicate error means a document with the name in doc_data already exists
+				attempted_name = doc_data.get('name') or current_doc_name
+				frappe.logger().info(f"Document {doctype} {attempted_name} already exists on remote. Finding and updating.")
+				
+				update_name = None
+				# First try the name we attempted to create (most likely to exist)
+				try:
+					api_client.get_document(doctype, attempted_name)
+					update_name = attempted_name
+				except (DocumentNotFoundError, requests.exceptions.HTTPError):
+					# Not found by attempted name, try current_doc_name
+					try:
+						api_client.get_document(doctype, current_doc_name)
+						update_name = current_doc_name
+					except (DocumentNotFoundError, requests.exceptions.HTTPError):
+						# Not found by name, try by sync_reference
+						if is_compulsory or is_syncable:
+							update_name = api_client.find_document_by_sync_reference(doctype, actual_name, sync_type="Local")
+				
+				# If still not found, use attempted_name as fallback
+				if not update_name:
+					update_name = attempted_name
+				
+				# Verify and update
+				try:
+					# Verify it exists
+					api_client.get_document(doctype, update_name)
+					result = api_client.update_document(doctype, update_name, doc_data)
+					action = "updated"
+					frappe.logger().info(f"Updated existing document {doctype} {update_name}")
+				except (DocumentNotFoundError, requests.exceptions.HTTPError) as e:
+					# Document doesn't exist - this shouldn't happen after duplicate error
+					# But handle it gracefully by trying to create again without the name
+					if isinstance(e, requests.exceptions.HTTPError) and e.response and e.response.status_code == 404:
+						frappe.log_error(
+							f"Document {doctype} {update_name} not found after DuplicateEntryError",
+							f"Document {doctype} {update_name} not found after DuplicateEntryError. Removing name from doc_data and retrying create."
+						)
+						# Remove name and let remote generate a new one
+						doc_data.pop('name', None)
+						try:
+							result = api_client.create_document(doctype, doc_data)
+							action = "created"
+							frappe.logger().info(f"Created document {doctype} without name after duplicate error")
+						except (DuplicateEntryError, Exception) as retry_error:
+							# If duplicate entry again or any other error, just pass - document already exists
+							if isinstance(retry_error, DuplicateEntryError):
+								frappe.logger().info(f"Document {doctype} already exists on remote (duplicate entry). Skipping sync.")
+								action = "skipped"
+								result = {"name": update_name or attempted_name}
+							else:
+								frappe.log_error(
+									"Failed to create document after duplicate error",
+									f"Could not create {doctype} after DuplicateEntryError: {str(retry_error)}"
+								)
+								# Pass instead of raising - document likely already exists
+								action = "skipped"
+								result = {"name": update_name or attempted_name}
+					else:
+						# For other errors, just pass - document likely already exists
+						frappe.logger().info(f"Document {doctype} {update_name} already exists on remote. Skipping sync.")
+						action = "skipped"
+						result = {"name": update_name or attempted_name}
+				except Exception as update_error:
+					# Any other error during update - just pass, document likely already exists
+					frappe.logger().info(f"Error updating document {doctype} {update_name} after duplicate entry: {str(update_error)}. Skipping sync.")
+					action = "skipped"
+					result = {"name": update_name or attempted_name}
 			except requests.exceptions.HTTPError as create_error:
 				# Check if it's a 403 Permission Denied error
 				error_str = str(create_error)
@@ -1246,14 +1695,46 @@ def sync_document_to_remote(
 						f"Error details: {error_str}"
 					)
 					frappe.log_error(
-						title=f"Sync Failed: Permission Denied for {doctype} {name}",
-						message=detailed_error
+						f"Sync Failed: Permission Denied for {doctype} {name}",
+						detailed_error
 					)
 					return {
 						"status": "error",
 						"error": f"Permission Denied (403): The API user does not have permission to create/update '{doctype}' documents on the remote server. Please check the API user's permissions and roles on the remote instance.",
 						"message": f"Failed to sync {doctype} {name}: Permission denied (403)"
 					}
+				# Check if it's a UniqueValidationError for sync_reference (417 status code)
+				# This happens when a document with the same sync_reference already exists
+				elif create_error.response and create_error.response.status_code == 417 and ("UniqueValidationError" in error_str or "sync_reference" in error_str.lower() or "Duplicate entry" in error_str):
+					# Document with same sync_reference already exists - find it and update instead
+					attempted_sync_ref = doc_data.get('sync_reference')
+					if attempted_sync_ref and (is_compulsory or is_syncable):
+						frappe.logger().info(f"Document with sync_reference {attempted_sync_ref} already exists on remote. Finding and updating.")
+						# Try to find by sync_reference
+						update_name = api_client.find_document_by_sync_reference(doctype, attempted_sync_ref, sync_type="Local")
+						if update_name:
+							try:
+								result = api_client.update_document(doctype, update_name, doc_data)
+								action = "updated"
+								frappe.logger().info(f"Updated existing document {doctype} {update_name} with same sync_reference")
+							except Exception as update_error:
+								frappe.log_error(
+									"Failed to update document with duplicate sync_reference",
+									f"Could not update {doctype} {update_name} after UniqueValidationError: {str(update_error)}"
+								)
+								# Pass instead of raising - document likely already exists
+								action = "skipped"
+								result = {"name": update_name}
+						else:
+							# Couldn't find by sync_reference, just pass
+							frappe.logger().info(f"Could not find document with sync_reference {attempted_sync_ref} on remote. Skipping sync.")
+							action = "skipped"
+							result = {"name": current_doc_name}
+					else:
+						# No sync_reference or not syncable, just pass
+						frappe.logger().info(f"UniqueValidationError for {doctype} {current_doc_name} (sync_reference issue). Skipping sync.")
+						action = "skipped"
+						result = {"name": current_doc_name}
 				# Check if it's a LinkValidationError (417 status code or error message)
 				elif (create_error.response and create_error.response.status_code == 417) or "LinkValidationError" in error_str or "Could not find" in error_str:
 					# Try to handle missing linked documents
@@ -1279,7 +1760,10 @@ def sync_document_to_remote(
 									frappe.logger().info(f"Resolved link field {field.fieldname} using sync_reference: {link_value} -> {remote_name}")
 								elif not remote_name:
 									# If sync_reference resolution failed, try to sync the missing document
-									frappe.logger().warning(f"Could not resolve {link_doctype} {link_value} using sync_reference. Attempting to sync it first.")
+									frappe.log_error(
+										f"Could not resolve {link_doctype} {link_value} using sync_reference",
+										f"Could not resolve {link_doctype} {link_value} using sync_reference. Attempting to sync it first."
+									)
 									try:
 										# Check if document exists locally
 										if frappe.db.exists(link_doctype, link_value):
@@ -1298,9 +1782,15 @@ def sync_document_to_remote(
 													resolved_any = True
 													frappe.logger().info(f"Resolved link field {field.fieldname} after syncing: {link_value} -> {remote_name}")
 										else:
-											frappe.logger().warning(f"Linked document {link_doctype} {link_value} does not exist locally. Cannot sync.")
+											frappe.log_error(
+												f"Linked document {link_doctype} {link_value} does not exist locally",
+												f"Linked document {link_doctype} {link_value} does not exist locally. Cannot sync."
+											)
 									except Exception as sync_error:
-										frappe.logger().warning(f"Failed to sync missing linked document {link_doctype} {link_value}: {str(sync_error)}")
+										frappe.log_error(
+											f"Failed to sync missing linked document {link_doctype} {link_value}",
+											f"Failed to sync missing linked document {link_doctype} {link_value}: {str(sync_error)}"
+										)
 					
 					# Also check child tables
 					for field in doc.meta.fields:
@@ -1327,7 +1817,10 @@ def sync_document_to_remote(
 														frappe.logger().info(f"Resolved child link field {child_field.fieldname} (Row #{idx+1}) using sync_reference: {link_value} -> {remote_name}")
 													elif not remote_name:
 														# If sync_reference resolution failed, try to sync the missing document
-														frappe.logger().warning(f"Could not resolve {link_doctype} {link_value} using sync_reference. Attempting to sync it first.")
+														frappe.log_error(
+															f"Could not resolve {link_doctype} {link_value} using sync_reference (child field)",
+															f"Could not resolve {link_doctype} {link_value} using sync_reference. Attempting to sync it first."
+														)
 														try:
 															# Check if document exists locally
 															if frappe.db.exists(link_doctype, link_value):
@@ -1346,9 +1839,15 @@ def sync_document_to_remote(
 																		resolved_any = True
 																		frappe.logger().info(f"Resolved child link field {child_field.fieldname} (Row #{idx+1}) after syncing: {link_value} -> {remote_name}")
 															else:
-																frappe.logger().warning(f"Linked document {link_doctype} {link_value} does not exist locally. Cannot sync.")
+																frappe.log_error(
+																	f"Linked document {link_doctype} {link_value} does not exist locally (child field)",
+																	f"Linked document {link_doctype} {link_value} does not exist locally. Cannot sync."
+																)
 														except Exception as sync_error:
-															frappe.logger().warning(f"Failed to sync missing linked document {link_doctype} {link_value}: {str(sync_error)}")
+															frappe.log_error(
+																f"Failed to sync missing linked document {link_doctype} {link_value} (child field)",
+																f"Failed to sync missing linked document {link_doctype} {link_value}: {str(sync_error)}"
+															)
 					
 					# If we resolved any links, retry immediately
 					if resolved_any:
@@ -1405,15 +1904,15 @@ def sync_document_to_remote(
 							if (is_compulsory or is_syncable) and created_name:
 								try:
 									update_data = {
-										'sync_reference': current_doc_name,
+										'sync_reference': actual_name,  # Use actual_name which is the renamed name from local
 										'sync_type': 'Local'
 									}
 									api_client.update_document(doctype, created_name, update_data)
-									frappe.logger().info(f"Set sync_reference={current_doc_name} and sync_type=Local on remote {doctype} {created_name}")
+									frappe.logger().info(f"Set sync_reference={actual_name} and sync_type=Local on remote {doctype} {created_name}")
 								except Exception as update_error:
 									frappe.log_error(
-										title="Failed to set sync_reference on remote document",
-										message=f"Could not set sync_reference on remote {doctype} {created_name}: {str(update_error)}"
+										"Failed to set sync_reference on remote document",
+										f"Could not set sync_reference on remote {doctype} {created_name}: {str(update_error)}"
 									)
 							# Queue submit if needed
 							if needs_submit and created_name and is_submittable_doctype(doctype):
@@ -1440,7 +1939,10 @@ def sync_document_to_remote(
 							}
 						except Exception as retry_error:
 							# If retry still fails, try handle_link_validation_error
-							frappe.logger().warning(f"Retry after sync_reference resolution failed: {str(retry_error)}. Trying handle_link_validation_error.")
+							frappe.log_error(
+								"Retry after sync_reference resolution failed",
+								f"Retry after sync_reference resolution failed: {str(retry_error)}. Trying handle_link_validation_error."
+							)
 							handled = handle_link_validation_error(
 								create_error, doctype, name, api_client, settings,
 								target_url, api_key, api_secret, direction="send"
@@ -1494,10 +1996,10 @@ def sync_document_to_remote(
 			except Exception as create_error:
 				# Check if it's a duplicate entry error in the error message
 				if "DuplicateEntryError" in str(type(create_error)) or "Duplicate entry" in str(create_error) or "already exists" in str(create_error).lower():
-					# Document already exists - treat as success and update it instead
-					frappe.logger().info(f"Document {doctype} {name} already exists on remote. Updating instead.")
-					result = api_client.update_document(doctype, name, doc_data)
-					action = "updated"
+					# Document already exists - just pass, don't throw error
+					frappe.logger().info(f"Document {doctype} {name} already exists on remote. Skipping sync.")
+					action = "skipped"
+					result = {"name": name}
 				else:
 					# Re-raise other errors
 					raise
@@ -1533,12 +2035,74 @@ def sync_document_to_remote(
 					is_async=True
 				)
 			except Exception as fetch_error:
-				frappe.logger().warning(f"Could not trigger fetch for {doctype} after send: {str(fetch_error)}")
+				frappe.log_error(
+					f"Could not trigger fetch for {doctype} after send",
+					f"Could not trigger fetch for {doctype} after send: {str(fetch_error)}"
+				)
+		
+		# Ensure action is set
+		if 'action' not in locals():
+			action = "unknown"
+			frappe.log_error(
+				f"[SYNC] Action was not set for {doctype} {actual_name}",
+				f"[SYNC] Action was not set for {doctype} {actual_name}, defaulting to 'unknown'"
+			)
+		
+		
+		# After successful sync, rename remote document if sync_reference is set and different from remote name
+		# Only for Sales Invoice and Payment Entry
+		if action in ("created", "updated") and doctype in ("Sales Invoice", "Payment Entry") and settings and hasattr(doc, 'sync_reference') and doc.sync_reference:
+			try:
+				# Get the remote document name
+				remote_doc_name = None
+				if action == "created":
+					# For created documents, get the name from result or created_name variable
+					if 'created_name' in locals() and created_name:
+						remote_doc_name = created_name
+					elif result:
+						if isinstance(result, dict):
+							remote_doc_name = result.get('name') or result.get('data', {}).get('name')
+							if not remote_doc_name and 'message' in result:
+								msg = result.get('message')
+								if isinstance(msg, dict):
+									remote_doc_name = msg.get('name')
+						elif isinstance(result, str):
+							remote_doc_name = result
+					# Fallback to current_doc_name if available
+					if not remote_doc_name and 'current_doc_name' in locals():
+						remote_doc_name = current_doc_name
+				elif action == "updated":
+					# For updated documents, use the update_name or doc_data name
+					if 'update_name' in locals() and update_name:
+						remote_doc_name = update_name
+					else:
+						remote_doc_name = doc_data.get('name') or actual_name
+				
+				# Check if remote name is different from sync_reference
+				if remote_doc_name and remote_doc_name != doc.sync_reference:
+					# Queue rename in background
+					from havano_sync.havano_sync.tasks.sync_operations import _rename_single_remote_document
+					frappe.enqueue(
+						_rename_single_remote_document,
+						doctype=doctype,
+						remote_name=remote_doc_name,
+						sync_reference=doc.sync_reference,
+						settings=settings,
+						queue="short",
+						timeout=60,
+						is_async=True,
+						job_name=f"rename_remote_{doctype}_{remote_doc_name}"
+					)
+			except Exception as rename_queue_error:
+				frappe.log_error(
+					f"[SYNC] Failed to queue remote rename for {doctype}",
+					f"[SYNC] Could not queue remote rename for {doctype}: {str(rename_queue_error)}"
+				)
 		
 		return {
 			"status": "success",
 			"doctype": doctype,
-			"name": name,
+			"name": actual_name,  # Return actual_name (renamed name) instead of original name
 			"action": action
 		}
 	except Exception as e:
@@ -1606,10 +2170,9 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 				return
 		except Exception as check_error:
 			frappe.log_error(
-				title="Failed to verify document before submit",
-				message=f"Could not verify document {doctype} {document_name} exists before submit: {str(check_error)}"
+				"Failed to verify document before submit",
+				f"Could not verify document {doctype} {document_name} exists before submit: {str(check_error)}"
 			)
-			frappe.logger().warning(f"[SUBMIT] Could not verify document {doctype} {document_name} exists: {str(check_error)}")
 			return
 		
 		# Now submit the document to get docstatus=1 with retry logic
@@ -1629,7 +2192,10 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 						submit_success = True  # Already submitted or cancelled
 						break
 				except Exception as verify_error:
-					frappe.logger().warning(f"[SUBMIT] Could not verify document state before submit attempt {attempt}: {str(verify_error)}")
+					frappe.log_error(
+						f"[SUBMIT] Could not verify document state before submit attempt {attempt}",
+						f"[SUBMIT] Could not verify document state before submit attempt {attempt}: {str(verify_error)}"
+					)
 				
 				submit_result = api_client.submit_document(doctype, document_name)
 				frappe.logger().info(f"[SUBMIT] Successfully submitted document {doctype} {document_name} on remote (docstatus=1) on attempt {attempt}")
@@ -1654,7 +2220,10 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 						except:
 							pass
 				
-				frappe.logger().warning(f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed for {doctype} {document_name}: {error_str}")
+				frappe.log_error(
+					f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed for {doctype} {document_name}",
+					f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed for {doctype} {document_name}: {error_str}"
+				)
 				
 				if attempt < max_retries:
 					frappe.logger().info(f"[SUBMIT] Retrying submit in {retry_delay} seconds...")
@@ -1665,8 +2234,8 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 					# Check if error is because doctype is not submittable on remote
 					if "not submittable" in error_str.lower() or "PermissionError" in error_str or "Permission" in error_str:
 						frappe.log_error(
-							title=f"Failed to submit document: {doctype} is not submittable on remote",
-							message=(
+							f"Failed to submit document: {doctype} is not submittable on remote",
+							(
 								f"Could not submit {doctype} {document_name} on remote to set docstatus=1 after {max_retries} attempts.\n\n"
 								f"The doctype may not be configured as submittable on the remote server, or there may be a permission issue.\n"
 								f"The API user may not have permission to submit documents.\n\n"
@@ -1677,8 +2246,8 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 						)
 					else:
 						frappe.log_error(
-							title="Failed to submit document on remote",
-							message=(
+							"Failed to submit document on remote",
+							(
 								f"Could not submit {doctype} {document_name} on remote to set docstatus=1 after {max_retries} attempts.\n\n"
 								f"Error: {error_str}\n\n"
 								f"Error details: {error_details}\n\n"
@@ -1692,7 +2261,10 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 						)
 			except Exception as submit_error:
 				error_str = str(submit_error)
-				frappe.logger().warning(f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed with unexpected error: {error_str}")
+				frappe.log_error(
+					f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed with unexpected error",
+					f"[SUBMIT] Submit attempt {attempt}/{max_retries} failed with unexpected error: {error_str}"
+				)
 				
 				if attempt < max_retries:
 					frappe.logger().info(f"[SUBMIT] Retrying submit in {retry_delay} seconds...")
@@ -1700,8 +2272,8 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 					retry_delay *= 2
 				else:
 					frappe.log_error(
-						title="Failed to submit document on remote",
-						message=(
+						"Failed to submit document on remote",
+						(
 							f"Could not submit {doctype} {document_name} on remote to set docstatus=1 after {max_retries} attempts.\n\n"
 							f"Unexpected error: {error_str}\n\n"
 							f"Document was created as draft (docstatus=0) but could not be submitted."
@@ -1716,14 +2288,20 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 				if remote_docstatus == 1:
 					frappe.logger().info(f"[SUBMIT] Verified: Document {doctype} {document_name} is now submitted (docstatus=1) on remote")
 				else:
-					frappe.logger().warning(f"[SUBMIT] Document {doctype} {document_name} submit appeared successful but docstatus is {remote_docstatus}, expected 1")
+					frappe.log_error(
+						f"[SUBMIT] Document {doctype} {document_name} submit appeared successful but docstatus is {remote_docstatus}",
+						f"[SUBMIT] Document {doctype} {document_name} submit appeared successful but docstatus is {remote_docstatus}, expected 1"
+					)
 			except Exception as verify_error:
-				frappe.logger().warning(f"[SUBMIT] Could not verify docstatus after submit for {doctype} {document_name}: {str(verify_error)}")
+				frappe.log_error(
+					f"[SUBMIT] Could not verify docstatus after submit for {doctype} {document_name}",
+					f"[SUBMIT] Could not verify docstatus after submit for {doctype} {document_name}: {str(verify_error)}"
+				)
 	
 	except Exception as e:
 		frappe.log_error(
-			title="Failed to submit remote document",
-			message=f"Error in _submit_remote_document for {doctype} {document_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
+			"Failed to submit remote document",
+			f"Error in _submit_remote_document for {doctype} {document_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
 		)
 		
 		# Try to extract more detailed error from HTTPError
@@ -1771,94 +2349,179 @@ def _submit_remote_document(doctype: str, document_name: str, remote_url: str, a
 
 def rename_remote_sales_invoices_by_sync_reference():
 	"""
-	Cron job to rename Sales Invoices on remote server where sync_reference != name
-	This ensures remote Sales Invoices match their sync_reference (local name with -Local suffix)
+	Cron job to rename Sales Invoices and Payment Entries on remote server where sync_reference != name
+	This ensures remote documents match their sync_reference (local name)
+	NOTE: This is DISABLED for Sales Invoice and Payment Entry that use naming series,
+	as they should keep their remote-generated names and sync_reference should match the local renamed name.
 	Runs every 5 minutes via cron
 	"""
 	try:
 		settings = get_sync_settings()
 		if not settings or not settings.remote_url or not settings.admin_api_key:
-			frappe.logger().warning("Havano Sync Settings not configured. Skipping remote Sales Invoice rename.")
+			frappe.log_error(
+				"Havano Sync Settings not configured",
+				"Havano Sync Settings not configured. Skipping remote document rename."
+			)
 			return
 		
 		api_secret = get_decrypted_api_secret(settings)
 		if not api_secret:
-			frappe.logger().warning("API Secret not configured. Skipping remote Sales Invoice rename.")
+			frappe.log_error(
+				"API Secret not configured",
+				"API Secret not configured. Skipping remote document rename."
+			)
 			return
+		
+		# Check if naming series is configured for Sales Invoice or Payment Entry
+		# If so, skip renaming for these doctypes as they should keep their remote names
+		has_sales_invoice_naming_series = hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series
+		has_payment_entry_naming_series = hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series
 		
 		# Initialize API client
 		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
 		
-		# Fetch Sales Invoices from remote where sync_reference != name and sync_type = "Local"
-		# These are documents that were synced from local but have different names on remote
-		try:
-			endpoint = "frappe.client.get_list"
-			params = {
-				"doctype": "Sales Invoice",
-				"filters": json.dumps({
-					"sync_type": "Local",
-					"sync_reference": ["!=", ""]
-				}),
-				"fields": json.dumps(["name", "sync_reference"]),
-				"limit_page_length": 1000  # Process up to 1000 at a time
-			}
-			
-			invoices = api_client._make_request("GET", endpoint, params=params)
-			
-			if not invoices or not isinstance(invoices, list):
-				frappe.logger().info("No Sales Invoices found on remote or invalid response format.")
-				return
-			
-			renamed_count = 0
-			error_count = 0
-			skipped_count = 0
-			
-			for invoice in invoices:
-				invoice_name = invoice.get('name')
-				sync_reference = invoice.get('sync_reference')
-				
-				if not invoice_name or not sync_reference:
-					skipped_count += 1
-					continue
-				
-				# Only rename if sync_reference != name
-				if invoice_name != sync_reference:
-					try:
-						frappe.logger().info(f"Renaming remote Sales Invoice from {invoice_name} to {sync_reference}")
-						api_client.rename_document(
-							doctype="Sales Invoice",
-							old_name=invoice_name,
-							new_name=sync_reference,
-							force=True,
-							merge=False
-						)
-						renamed_count += 1
-						frappe.logger().info(f"Successfully renamed Sales Invoice from {invoice_name} to {sync_reference}")
-					except Exception as rename_error:
-						error_count += 1
-						frappe.log_error(
-							title="Failed to rename remote Sales Invoice",
-							message=f"Could not rename Sales Invoice from {invoice_name} to {sync_reference}: {str(rename_error)}"
-						)
-						frappe.logger().warning(f"Failed to rename Sales Invoice {invoice_name} to {sync_reference}: {str(rename_error)}")
-				else:
-					# sync_reference == name, no rename needed
-					skipped_count += 1
-			
-			if renamed_count > 0 or error_count > 0:
-				frappe.logger().info(f"Remote Sales Invoice rename cron job completed: {renamed_count} renamed, {error_count} errors, {skipped_count} skipped (already matching)")
-		
-		except Exception as e:
-			frappe.log_error(
-				title="Error in rename_remote_sales_invoices_by_sync_reference",
-				message=f"Error fetching or renaming remote Sales Invoices: {str(e)}"
+		# Process Sales Invoice only if naming series is NOT configured
+		if not has_sales_invoice_naming_series:
+			_process_remote_rename_by_sync_reference(
+				api_client, "Sales Invoice", settings
 			)
-			frappe.logger().error(f"Error in rename_remote_sales_invoices_by_sync_reference: {str(e)}")
+		else:
+			frappe.logger().info("Skipping Sales Invoice rename - naming series is configured")
+		
+		# Process Payment Entry only if naming series is NOT configured
+		if not has_payment_entry_naming_series:
+			_process_remote_rename_by_sync_reference(
+				api_client, "Payment Entry", settings
+			)
+		else:
+			frappe.logger().info("Skipping Payment Entry rename - naming series is configured")
 	
 	except Exception as e:
 		frappe.log_error(
-			title="Error in rename_remote_sales_invoices_by_sync_reference",
-			message=f"Unexpected error: {str(e)}"
+			"Error in rename_remote_sales_invoices_by_sync_reference",
+			f"Unexpected error: {str(e)}"
 		)
 		frappe.logger().error(f"Unexpected error in rename_remote_sales_invoices_by_sync_reference: {str(e)}")
+
+
+def _process_remote_rename_by_sync_reference(api_client, doctype: str, settings):
+	"""
+	Helper function to process renaming remote documents by sync_reference
+	"""
+	try:
+		# Fetch documents from remote where sync_reference != name and sync_type = "Local"
+		# These are documents that were synced from local but have different names on remote
+		endpoint = "frappe.client.get_list"
+		params = {
+			"doctype": doctype,
+			"filters": json.dumps({
+				"sync_type": "Local",
+				"sync_reference": ["!=", ""]
+			}),
+			"fields": json.dumps(["name", "sync_reference"]),
+			"limit_page_length": 1000  # Process up to 1000 at a time
+		}
+		
+		documents = api_client._make_request("GET", endpoint, params=params)
+		
+		if not documents or not isinstance(documents, list):
+			frappe.logger().info(f"No {doctype} documents found on remote or invalid response format.")
+			return
+		
+		renamed_count = 0
+		error_count = 0
+		skipped_count = 0
+		
+		for doc in documents:
+			doc_name = doc.get('name')
+			sync_reference = doc.get('sync_reference')
+			
+			if not doc_name or not sync_reference:
+				skipped_count += 1
+				continue
+			
+			# Only rename if sync_reference != name
+			if doc_name != sync_reference:
+				try:
+					frappe.logger().info(f"Renaming remote {doctype} from {doc_name} to {sync_reference}")
+					api_client.rename_document(
+						doctype=doctype,
+						old_name=doc_name,
+						new_name=sync_reference,
+						force=True,
+						merge=False
+					)
+					renamed_count += 1
+					frappe.logger().info(f"Successfully renamed {doctype} from {doc_name} to {sync_reference}")
+				except Exception as rename_error:
+					error_count += 1
+					frappe.log_error(
+						f"Failed to rename remote {doctype}",
+						f"Could not rename {doctype} from {doc_name} to {sync_reference}: {str(rename_error)}"
+					)
+			else:
+				# sync_reference == name, no rename needed
+				skipped_count += 1
+		
+		if renamed_count > 0 or error_count > 0:
+			frappe.logger().info(f"Remote {doctype} rename cron job completed: {renamed_count} renamed, {error_count} errors, {skipped_count} skipped (already matching)")
+	
+	except Exception as e:
+		frappe.log_error(
+			f"Error in _process_remote_rename_by_sync_reference for {doctype}",
+			f"Error fetching or renaming remote {doctype} documents: {str(e)}"
+		)
+		frappe.logger().error(f"Error in _process_remote_rename_by_sync_reference for {doctype}: {str(e)}")
+
+
+def _rename_single_remote_document(doctype: str, remote_name: str, sync_reference: str, settings):
+	"""
+	Rename a single remote document to match its sync_reference
+	"""
+	try:
+		api_secret = get_decrypted_api_secret(settings)
+		if not api_secret:
+			frappe.log_error(
+				f"[RENAME_REMOTE] API Secret not configured",
+				f"[RENAME_REMOTE] API Secret not configured. Cannot rename {doctype} {remote_name}"
+			)
+			return
+		
+		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
+		
+		# Verify document exists on remote
+		try:
+			remote_doc = api_client.get_document(doctype, remote_name)
+			if not remote_doc:
+				frappe.log_error(
+					f"[RENAME_REMOTE] Document not found on remote",
+					f"[RENAME_REMOTE] Document {doctype} {remote_name} not found on remote"
+				)
+				return
+		except Exception as get_error:
+			frappe.log_error(
+				f"[RENAME_REMOTE] Failed to get document from remote",
+				f"[RENAME_REMOTE] Failed to get {doctype} {remote_name} from remote: {str(get_error)}"
+			)
+			return
+		
+		# Rename the document
+		try:
+			api_client.rename_document(
+				doctype=doctype,
+				old_name=remote_name,
+				new_name=sync_reference,
+				force=True,
+				merge=False
+			)
+		except Exception as rename_error:
+			frappe.log_error(
+				f"[RENAME_REMOTE] Failed to rename {doctype}",
+				f"[RENAME_REMOTE] Failed to rename {doctype} from {remote_name} to {sync_reference}: {str(rename_error)}"
+			)
+	except Exception as e:
+		frappe.log_error(
+			f"[RENAME_REMOTE] Error renaming remote {doctype}",
+			f"[RENAME_REMOTE] Error renaming remote {doctype} {remote_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
+		)
 

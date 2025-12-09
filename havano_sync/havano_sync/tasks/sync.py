@@ -328,14 +328,71 @@ def sync_single_document(doctype: str, name: str):
 				else:
 					frappe.logger().warning(f"Manual sync for {doctype} {name}: Document has docstatus={doc.docstatus}. Will sync with current status.")
 		except frappe.DoesNotExistError:
-			# Check if document exists with -Local suffix
-			if not name.endswith("-Local"):
-				local_name = f"{name}-Local"
-				if frappe.db.exists(doctype, local_name):
-					frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {local_name}")
-					name = local_name
-				else:
-					frappe.throw(f"Document {doctype} {name} does not exist (also checked {local_name})")
+			# For Sales Invoice and Payment Entry with naming series, try to find renamed document
+			if doctype in ("Sales Invoice", "Payment Entry"):
+				settings = get_sync_settings()
+				if settings:
+					naming_series_to_check = None
+					if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+						naming_series_to_check = settings.payment_entry_naming_series
+					elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+						naming_series_to_check = settings.sales_invoice_naming_series
+					
+					if naming_series_to_check:
+						# Try to find renamed document by pattern matching
+						import re
+						pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
+						if pattern_match:
+							prefix = pattern_match.group(1).rstrip('-')
+							table_name = f"tab{doctype}"
+							recent_docs = frappe.db.sql(f"""
+								SELECT name FROM `{table_name}`
+								WHERE name LIKE %s
+								AND name != %s
+								AND sync_type = 'Local'
+								AND creation >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+								ORDER BY creation DESC
+								LIMIT 1
+							""", (prefix + '%', name), as_dict=True)
+							
+							if recent_docs:
+								renamed_name = recent_docs[0].name
+								frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {renamed_name}")
+								# Try to get the document again with the new name
+								try:
+									doc = frappe.get_doc(doctype, renamed_name)
+									name = renamed_name  # Update name for rest of function
+								except frappe.DoesNotExistError:
+									frappe.throw(f"Document {doctype} {name} does not exist (also checked renamed version {renamed_name})")
+							else:
+								# Check if document exists with -Local suffix as fallback
+								if not name.endswith("-Local"):
+									local_name = f"{name}-Local"
+									if frappe.db.exists(doctype, local_name):
+										frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {local_name}")
+										name = local_name
+									else:
+										frappe.throw(f"Document {doctype} {name} does not exist (also checked {local_name} and renamed versions)")
+								else:
+									frappe.throw(f"Document {doctype} {name} does not exist")
+						else:
+							# Could not parse naming series, fall back to -Local check
+							if not name.endswith("-Local"):
+								local_name = f"{name}-Local"
+								if frappe.db.exists(doctype, local_name):
+									frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {local_name}")
+									name = local_name
+								else:
+									frappe.throw(f"Document {doctype} {name} does not exist (also checked {local_name})")
+			else:
+				# For other doctypes, check if document exists with -Local suffix
+				if not name.endswith("-Local"):
+					local_name = f"{name}-Local"
+					if frappe.db.exists(doctype, local_name):
+						frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {local_name}")
+						name = local_name
+					else:
+						frappe.throw(f"Document {doctype} {name} does not exist (also checked {local_name})")
 		
 		# Check internet connection
 		has_internet = check_internet_connection(settings)

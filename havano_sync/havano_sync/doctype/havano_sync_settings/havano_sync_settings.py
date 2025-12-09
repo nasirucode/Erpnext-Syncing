@@ -6,6 +6,68 @@ from frappe.model.document import Document
 from havano_sync.havano_sync.utils.sync_api import SyncAPI
 
 
+def update_naming_series_options_locally(doctype: str, naming_series_name: str) -> bool:
+	"""
+	Update the naming series options in a DocType locally.
+	
+	Args:
+		doctype: Document type (e.g., "Payment Entry", "Sales Invoice")
+		naming_series_name: Name of the naming series to add
+	
+	Returns:
+		True if naming series was added or already exists, False otherwise
+	"""
+	if not naming_series_name:
+		return True
+	
+	try:
+		# Get the DocType document
+		doctype_doc = frappe.get_doc("DocType", doctype)
+		
+		# Find the naming_series field
+		naming_series_field = None
+		for field in doctype_doc.fields:
+			if field.fieldname == 'naming_series':
+				naming_series_field = field
+				break
+		
+		if not naming_series_field:
+			# No naming_series field, nothing to do
+			return True
+		
+		# Get current options
+		options = naming_series_field.options or ''
+		
+		# Check if naming series is already in options
+		options_list = [opt.strip() for opt in options.split('\n') if opt.strip()]
+		already_exists = naming_series_name in options_list
+		
+		if not already_exists:
+			# Add naming series to options
+			options_list.append(naming_series_name)
+			naming_series_field.options = '\n'.join(options_list)
+		
+		# Set as default (whether it was just added or already existed)
+		naming_series_field.default = naming_series_name
+		
+		# Save the DocType
+		doctype_doc.save(ignore_permissions=True)
+		frappe.db.commit()
+		
+		# Clear cache to ensure UI reflects the changes
+		frappe.clear_cache(doctype=doctype)
+		frappe.reload_doctype(doctype, force=True)
+		
+		return True
+		
+	except Exception as e:
+		frappe.log_error(
+			title="Failed to update naming series options locally",
+			message=f"Could not add naming series {naming_series_name} to options for {doctype}: {str(e)}"
+		)
+		return False
+
+
 class HavanoSyncSettings(Document):
 	def get_target_url(self):
 		"""Get the target URL (remote server URL)"""
@@ -65,3 +127,5 @@ class HavanoSyncSettings(Document):
 				"status": "error",
 				"message": f"Connection test failed: {error_message}"
 			}
+	
+	

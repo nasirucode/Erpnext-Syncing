@@ -336,6 +336,17 @@ class SyncAPI:
 						# Raise special exception for duplicate entries
 						raise DuplicateEntryError(f"Document already exists on remote server: {remote_error or str(e)}")
 					
+					# Check for UniqueValidationError (417 status code) - often for sync_reference duplicates
+					if e.response.status_code == 417:
+						if 'exc_type' in error_response and 'UniqueValidationError' in error_response.get('exc_type', ''):
+							is_expected_error = True
+							# Check if it's a sync_reference duplicate
+							if 'sync_reference' in str(remote_error).lower() or 'sync_reference' in str(error_response):
+								raise DuplicateEntryError(f"Document with same sync_reference already exists on remote server: {remote_error or str(e)}")
+							else:
+								# Other unique validation error
+								raise DuplicateEntryError(f"Unique validation error on remote server: {remote_error or str(e)}")
+					
 					if e.response.status_code == 404:
 						if 'exc_type' in error_response and 'DoesNotExistError' in error_response.get('exc_type', ''):
 							is_expected_error = True
@@ -552,7 +563,10 @@ class SyncAPI:
 	def find_document_by_sync_reference(self, doctype: str, sync_reference: str, sync_type: str = "Local") -> Optional[str]:
 		"""
 		Find a document on the remote instance by sync_reference field.
-		Uses a custom API endpoint since frappe.client.get_list doesn't allow custom fields in filters.
+		Uses standard Frappe API methods (does not use custom havano_sync API endpoint).
+		
+		Note: frappe.client.get_list doesn't support custom fields in filters,
+		so we try to get the document by name (assuming sync_reference often matches the name).
 		
 		Args:
 			doctype: Document type to search
@@ -562,18 +576,21 @@ class SyncAPI:
 		Returns:
 			Document name if found, None otherwise
 		"""
+		# frappe.client.get_list doesn't support custom fields like sync_reference in filters
+		# So we try to get the document by name (sync_reference value) and verify it matches
 		try:
-			endpoint = "havano_sync.havano_sync.api.sync.find_document_by_sync_reference"
-			params = {
-				"doctype": doctype,
-				"sync_reference": sync_reference,
-				"sync_type": sync_type
-			}
-			result = self._make_request("GET", endpoint, params=params)
-			return result if result else None
+			doc = self.get_document(doctype, sync_reference)
+			if doc and doc.get('sync_reference') == sync_reference and doc.get('sync_type') == sync_type:
+				return sync_reference
+		except (DocumentNotFoundError, requests.exceptions.HTTPError):
+			# Document not found by name - sync_reference doesn't match the name
+			pass
 		except Exception as e:
-			frappe.logger().debug(f"Could not find document by sync_reference for {doctype} {sync_reference}: {str(e)}")
-			return None
+			frappe.logger().debug(f"Error finding document by sync_reference for {doctype} {sync_reference}: {str(e)}")
+		
+		# If sync_reference doesn't match the name, we can't find it without custom API
+		# Return None - the caller should handle this gracefully
+		return None
 	
 	def test_connection(self):
 		"""

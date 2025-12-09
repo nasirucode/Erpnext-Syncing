@@ -12,6 +12,11 @@
   "admin_api_key",
   "section_break_hmdv",
   "company",
+  "section_break_naming",
+  "payment_entry_naming_series",
+  "column_break_naming_series",
+  "sales_invoice_naming_series",
+  "section_break_csvt",
   "syncable_doctypes"
  ],
  "fields": [
@@ -24,6 +29,7 @@
   {
    "fieldname": "remote_url",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Remote Server URL",
    "reqd": 1
   },
@@ -34,12 +40,14 @@
   {
    "fieldname": "admin_api_key",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Admin Api Key",
    "reqd": 1
   },
   {
    "fieldname": "admin_api_secret",
    "fieldtype": "Password",
+   "in_list_view": 1,
    "label": "Admin Api Secret",
    "reqd": 1
   },
@@ -48,24 +56,49 @@
    "fieldtype": "Section Break"
   },
   {
+   "description": "Specify the company to work with. Only documents belonging to this company (and associated accounts, warehouses, cost centers) will be fetched from remote.",
    "fieldname": "company",
    "fieldtype": "Link",
    "label": "Company",
-   "options": "Company",
-   "description": "Specify the company to work with. Only documents belonging to this company (and associated accounts, warehouses, cost centers) will be fetched from remote."
+   "options": "Company"
+  },
+  {
+   "fieldname": "section_break_naming",
+   "fieldtype": "Section Break",
+   "label": "Naming Series Settings"
+  },
+  {
+   "description": "Naming series to use for Payment Entry when syncing to remote. This will be saved locally and sent to remote. Leave empty to use the original naming series from the document.",
+   "fieldname": "payment_entry_naming_series",
+   "fieldtype": "Data",
+   "label": "Payment Entry Naming Series"
+  },
+  {
+   "fieldname": "column_break_naming_series",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Naming series to use for Sales Invoice when syncing to remote. This will be saved locally and sent to remote. Leave empty to use the original naming series from the document.",
+   "fieldname": "sales_invoice_naming_series",
+   "fieldtype": "Data",
+   "label": "Sales Invoice Naming Series"
   },
   {
    "fieldname": "syncable_doctypes",
    "fieldtype": "Table",
    "label": "Syncable Doctypes",
    "options": "Havano Syncable Doctypes"
+  },
+  {
+   "fieldname": "section_break_csvt",
+   "fieldtype": "Section Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-01-27 00:00:00.000000",
+ "modified": "2025-12-09 12:17:27.516267",
  "modified_by": "Administrator",
  "module": "Havano Sync",
  "name": "Havano Sync Settings",
