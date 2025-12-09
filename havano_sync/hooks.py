@@ -165,7 +165,7 @@ doc_events = {
 
 scheduler_events = {
 	"cron": {
-		"*/25 * * * *": [
+		"0 */2 * * *": [
 			"havano_sync.havano_sync.tasks.sync.sync_cron_job"
 		],
 		"*/15 * * * *": [

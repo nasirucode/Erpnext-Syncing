@@ -25,8 +25,21 @@ def fetch_document_from_remote(doctype: str, name: str):
 	"""
 	Fetch a single document from remote server and create/update it locally
 	Skips if document already exists locally
+	
+	Important doctypes (Sales Invoice, Payment Entry, Sales Order) 
+	can only sync from local to remote, not from remote to local.
 	"""
 	try:
+		# Important doctypes should only sync from local to remote, not fetch from remote
+		important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
+		if doctype in important_doctypes:
+			return {
+				"status": "skipped",
+				"message": f"Doctype {doctype} can only sync from local to remote, not from remote to local",
+				"doctype": doctype,
+				"name": name
+			}
+		
 		settings = get_sync_settings()
 		
 		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
@@ -40,34 +53,14 @@ def fetch_document_from_remote(doctype: str, name: str):
 		if not should_sync_doctype(doctype, settings, direction="fetch"):
 			frappe.throw(f"Doctype {doctype} is not configured for fetching from remote")
 		
-		# Check if document already exists locally - skip if it does
-		# For submittable doctypes, also check by sync_reference
-		existing_local_doc = None
-		try:
-			local_doc = frappe.get_doc(doctype, name)
-			existing_local_doc = local_doc
-		except frappe.DoesNotExistError:
-			# Document doesn't exist by name, check by sync_reference for submittable doctypes
-			if is_submittable_doctype(doctype):
-				try:
-					# Check if a document with this sync_reference already exists
-					existing = frappe.get_all(
-						doctype,
-						filters={"sync_reference": name, "sync_type": "Local"},
-						limit=1
-					)
-					if existing:
-						existing_local_doc = frappe.get_doc(doctype, existing[0].name)
-						frappe.logger().info(f"Found existing document {doctype} {existing[0].name} by sync_reference {name}")
-				except Exception:
-					pass
-		
-		if existing_local_doc:
+		# Check if document already exists locally by name - skip if it does
+		# Documents fetched from remote should use their original name (no -Local suffix)
+		if frappe.db.exists(doctype, name):
 			return {
 				"status": "skipped",
-				"message": f"Document {doctype} {existing_local_doc.name} already exists locally (matched by sync_reference {name}). Skipping fetch.",
+				"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
 				"doctype": doctype,
-				"name": existing_local_doc.name
+				"name": name
 			}
 		
 		# Get decrypted API secret
@@ -382,11 +375,13 @@ def fetch_document_from_remote(doctype: str, name: str):
 					message=f"Could not ensure sync fields exist locally for {doctype}: {str(e)}"
 				)
 		
-		# Create document locally
+		# Create document locally with original name (no -Local suffix for fetched documents)
 		# Remove metadata fields that shouldn't be set during creation
 		metadata_fields = {'name', 'doctype', 'modified', 'modified_by', 'creation', 'owner', '_user_tags', '_comments', '_assign', '_liked_by', '_seen', 'docstatus'}
 		doc_data = {k: v for k, v in remote_doc.items() if k not in metadata_fields}
 		doc_data['doctype'] = doctype
+		# Set name to original name from remote (no -Local suffix for fetched documents)
+		doc_data['name'] = name
 		
 		# For all syncable and compulsory doctypes, set sync_reference and sync_type
 		# Check if doctype is syncable or compulsory
@@ -394,11 +389,12 @@ def fetch_document_from_remote(doctype: str, name: str):
 		is_compulsory = doctype in auto_sync_doctypes
 		is_syncable = should_sync_doctype(doctype, settings, direction="send")
 		
+		# Always set sync_type to "Remote" for documents fetched from remote
+		doc_data['sync_type'] = "Remote"
+		
 		if is_compulsory or is_syncable:
 			# Set sync_reference to remote document name
 			doc_data['sync_reference'] = name
-			# Set sync_type to "Remote" (since this is being fetched from remote)
-			doc_data['sync_type'] = "Remote"
 		
 		# Ensure all fetched documents are committed before creating the main document
 		frappe.db.commit()
@@ -448,12 +444,71 @@ def fetch_document_from_remote(doctype: str, name: str):
 					"name": name
 				}
 		
+		# Double-check document doesn't exist before inserting (in case it was created between checks)
+		if frappe.db.exists(doctype, name):
+			return {
+				"status": "skipped",
+				"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
+				"doctype": doctype,
+				"name": name
+			}
+		
+		# Final check before insert - use a transaction-safe check
+		frappe.db.begin()
+		try:
+			# Check again within transaction to prevent race conditions
+			if frappe.db.exists(doctype, name):
+				frappe.db.rollback()
+				return {
+					"status": "skipped",
+					"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
+					"doctype": doctype,
+					"name": name
+				}
+		except Exception:
+			frappe.db.rollback()
+		
 		# Insert the document
 		# Use ignore_links=False to ensure all links are validated
 		# But we've already verified they exist above
 		try:
 			local_doc.insert(ignore_permissions=True, ignore_links=False)
 			frappe.db.commit()
+			
+			# Explicitly set sync_type after insert to ensure it's saved
+			# This is important because sync_type might not be in the DocType yet
+			try:
+				meta = frappe.get_meta(doctype)
+				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+				if has_sync_type:
+					frappe.db.set_value(doctype, name, 'sync_type', 'Remote', update_modified=False)
+					frappe.db.commit()
+			except Exception as sync_type_error:
+				# If we can't set sync_type, log but don't fail
+				frappe.log_error(
+					title="Failed to set sync_type on fetched document",
+					message=f"Could not set sync_type=Remote on {doctype} {name}: {str(sync_type_error)}"
+				)
+		except (frappe.DuplicateEntryError, frappe.UniqueValidationError) as e:
+			# Document already exists locally - skip and return success
+			frappe.db.rollback()
+			frappe.logger().info(f"Document {doctype} {name} already exists locally. Skipping fetch.")
+			duration = time.time() - start_time
+			create_sync_log(
+				sync_type="Fetch",
+				doctype=doctype,
+				document_name=name,
+				status="Success",
+				message=f"Document already exists locally, skipped",
+				sync_method="Manual",
+				duration_seconds=duration
+			)
+			return {
+				"status": "success",
+				"doctype": doctype,
+				"name": name,
+				"message": "Document already exists locally, skipped"
+			}
 		except frappe.LinkValidationError as e:
 			# If link validation fails, try to handle missing linked documents
 			frappe.logger().info(f"LinkValidationError detected for {doctype} {name}, attempting to create missing documents")
@@ -468,11 +523,55 @@ def fetch_document_from_remote(doctype: str, name: str):
 				)
 				
 				if handled:
+					# Check again before retry
+					if frappe.db.exists(doctype, name):
+						frappe.db.rollback()
+						return {
+							"status": "skipped",
+							"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
+							"doctype": doctype,
+							"name": name
+						}
+					
 					# Retry the insert operation
 					try:
 						local_doc.insert(ignore_permissions=True, ignore_links=False)
 						frappe.db.commit()
+						
+						# Explicitly set sync_type after insert
+						try:
+							meta = frappe.get_meta(doctype)
+							has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+							if has_sync_type:
+								frappe.db.set_value(doctype, name, 'sync_type', 'Remote', update_modified=False)
+								frappe.db.commit()
+						except Exception as sync_type_error:
+							frappe.log_error(
+								title="Failed to set sync_type on fetched document",
+								message=f"Could not set sync_type=Remote on {doctype} {name}: {str(sync_type_error)}"
+							)
+						
 						frappe.logger().info(f"Successfully created {doctype} {name} after handling LinkValidationError")
+					except (frappe.DuplicateEntryError, frappe.UniqueValidationError) as retry_error:
+						# Document already exists locally - skip and return success
+						frappe.db.rollback()
+						frappe.logger().info(f"Document {doctype} {name} already exists locally after retry. Skipping fetch.")
+						duration = time.time() - start_time
+						create_sync_log(
+							sync_type="Fetch",
+							doctype=doctype,
+							document_name=name,
+							status="Success",
+							message=f"Document already exists locally, skipped",
+							sync_method="Manual",
+							duration_seconds=duration
+						)
+						return {
+							"status": "success",
+							"doctype": doctype,
+							"name": name,
+							"message": "Document already exists locally, skipped"
+						}
 					except frappe.LinkValidationError as retry_error:
 						# If retry still fails, return error
 						error_msg = str(retry_error)
@@ -561,8 +660,20 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 	"""
 	Fetch all documents from remote server for enabled doctypes
 	Skips documents that already exist locally
+	
+	Important doctypes (Sales Invoice, Payment Entry, Sales Order) 
+	can only sync from local to remote, not from remote to local.
 	"""
 	try:
+		# Important doctypes should only sync from local to remote, not fetch from remote
+		important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
+		if doctype and doctype in important_doctypes:
+			return {
+				"status": "skipped",
+				"message": f"Doctype {doctype} can only sync from local to remote, not from remote to local",
+				"doctype": doctype
+			}
+		
 		settings = get_sync_settings()
 		
 		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
@@ -599,6 +710,15 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 			if doctype_name and doctype_name.endswith("-Local"):
 				doctype_name = doctype_name[:-6]  # Remove "-Local" (6 characters)
 				frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {doctype_name} instead.")
+			
+			# Skip important doctypes - they should only sync from local to remote
+			important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
+			if doctype_name in important_doctypes:
+				results["skipped"].append({
+					"doctype": doctype_name,
+					"message": f"Doctype {doctype_name} can only sync from local to remote, not from remote to local"
+				})
+				continue
 			
 			# If specific doctype requested, skip others
 			if doctype and doctype_name != doctype:
@@ -682,7 +802,10 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						doc_data = {k: v for k, v in remote_doc.items() if k not in metadata_fields}
 						doc_data['doctype'] = doctype_name
 						
-						# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
+						# Always set sync_type to "Remote" for documents fetched from remote
+						doc_data['sync_type'] = "Remote"
+						
+						# For all syncable and compulsory doctypes, ensure sync fields exist locally and set sync_reference
 						# Check if doctype is syncable or compulsory
 						auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 						is_compulsory = doctype_name in auto_sync_doctypes
@@ -737,20 +860,57 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 									message=f"Could not ensure sync fields exist locally for {doctype_name}: {str(e)}"
 								)
 							
-							# Set sync_reference and sync_type
+							# Set sync_reference (sync_type already set above)
 							doc_data['sync_reference'] = doc_name
-							doc_data['sync_type'] = "Remote"
 						
-						# Create the document
+						# Check if document already exists before creating (use original name, no -Local suffix)
+						# Use transaction-safe check
+						frappe.db.begin()
+						try:
+							if frappe.db.exists(doctype_name, doc_name):
+								frappe.db.rollback()
+								results["success"].append({
+									"doctype": doctype_name,
+									"name": doc_name,
+									"message": "Document already exists locally, skipped"
+								})
+								continue
+						except Exception:
+							frappe.db.rollback()
+						
+						# Create the document with original name (no -Local suffix for fetched documents)
+						doc_data['name'] = doc_name  # Ensure name is set to original name
 						local_doc = frappe.get_doc(doc_data)
-						local_doc.insert(ignore_permissions=True)
-						frappe.db.commit()
-						
-						results["success"].append({
-							"doctype": doctype_name,
-							"name": doc_name,
-							"message": "Document fetched successfully"
-						})
+						try:
+							local_doc.insert(ignore_permissions=True)
+							frappe.db.commit()
+							
+							# Explicitly set sync_type after insert to ensure it's saved
+							try:
+								meta = frappe.get_meta(doctype_name)
+								has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
+								if has_sync_type:
+									frappe.db.set_value(doctype_name, doc_name, 'sync_type', 'Remote', update_modified=False)
+									frappe.db.commit()
+							except Exception as sync_type_error:
+								frappe.log_error(
+									title="Failed to set sync_type on fetched document",
+									message=f"Could not set sync_type=Remote on {doctype_name} {doc_name}: {str(sync_type_error)}"
+								)
+							
+							results["success"].append({
+								"doctype": doctype_name,
+								"name": doc_name,
+								"message": "Document fetched successfully"
+							})
+						except (frappe.DuplicateEntryError, frappe.UniqueValidationError):
+							# Document already exists locally - skip
+							frappe.db.rollback()
+							results["success"].append({
+								"doctype": doctype_name,
+								"name": doc_name,
+								"message": "Document already exists locally, skipped"
+							})
 					except DocumentNotFoundError:
 						results["errors"].append({
 							"doctype": doctype_name,
