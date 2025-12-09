@@ -259,9 +259,9 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 		# Check if document has -Local suffix, if not, log a warning
 		# Note: We can't rename it now because it's already submitted
 		if not document_name.endswith("-Local"):
-			frappe.logger().warning(
-				f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} was submitted without -Local suffix. "
-				f"The rename may not have completed yet. Sync will proceed with current name."
+			frappe.log_error(
+				title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} was submitted without -Local suffix",
+				message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} was submitted without -Local suffix. The rename may not have completed yet. Sync will proceed with current name."
 			)
 		
 		# Queue ALL processing in background - this ensures submit doesn't block at all
@@ -456,7 +456,10 @@ def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 		
 		# Check if the new name already exists
 		if frappe.db.exists(doctype, new_name):
-			frappe.logger().warning(f"[ADD_LOCAL_SUFFIX] Document name {new_name} already exists, keeping original name {original_name}")
+			frappe.log_error(
+				title=f"[ADD_LOCAL_SUFFIX] Document name {new_name} already exists",
+				message=f"[ADD_LOCAL_SUFFIX] Document name {new_name} already exists, keeping original name {original_name}"
+			)
 			# Queue sync with original name in background
 			frappe.enqueue(
 				_queue_sync_if_needed,
@@ -512,7 +515,10 @@ def _rename_document_immediately(doctype: str, original_name: str, new_name: str
 		
 		# Verify document exists
 		if not frappe.db.exists(doctype, original_name):
-			frappe.logger().warning(f"[RENAME_IMMEDIATELY] Document {doctype} {original_name} does not exist")
+			frappe.log_error(
+				title=f"[RENAME_IMMEDIATELY] Document {doctype} {original_name} does not exist",
+				message=f"[RENAME_IMMEDIATELY] Document {doctype} {original_name} does not exist"
+			)
 			return
 		
 		# Check if document is submitted - if so, we can't rename it
@@ -525,11 +531,17 @@ def _rename_document_immediately(doctype: str, original_name: str, new_name: str
 				return
 		except Exception as check_error:
 			# If we can't check docstatus, continue with rename attempt
-			frappe.logger().warning(f"[RENAME_IMMEDIATELY] Could not check docstatus for {doctype} {original_name}: {str(check_error)}")
+			frappe.log_error(
+				title=f"[RENAME_IMMEDIATELY] Could not check docstatus for {doctype} {original_name}",
+				message=f"[RENAME_IMMEDIATELY] Could not check docstatus for {doctype} {original_name}: {str(check_error)}"
+			)
 		
 		# Check if new name still available
 		if frappe.db.exists(doctype, new_name):
-			frappe.logger().warning(f"[RENAME_IMMEDIATELY] Document name {new_name} already exists, cannot rename")
+			frappe.log_error(
+				title=f"[RENAME_IMMEDIATELY] Document name {new_name} already exists",
+				message=f"[RENAME_IMMEDIATELY] Document name {new_name} already exists, cannot rename"
+			)
 			# Queue sync with original name
 			_queue_sync_if_needed(doctype, original_name)
 			return
@@ -550,7 +562,10 @@ def _rename_document_immediately(doctype: str, original_name: str, new_name: str
 			
 			# Verify original name no longer exists
 			if frappe.db.exists(doctype, original_name):
-				frappe.logger().warning(f"[RENAME_IMMEDIATELY] Original name {original_name} still exists after rename. Waiting and rechecking.")
+				frappe.log_error(
+					title=f"[RENAME_IMMEDIATELY] Original name {original_name} still exists after rename",
+					message=f"[RENAME_IMMEDIATELY] Original name {original_name} still exists after rename. Waiting and rechecking."
+				)
 				time.sleep(1)  # Wait a bit more
 				if frappe.db.exists(doctype, original_name):
 					frappe.logger().error(f"[RENAME_IMMEDIATELY] Rename incomplete - original name still exists")
@@ -600,7 +615,10 @@ def _rename_document_after_delay(doctype: str, original_name: str, new_name: str
 		
 		# Verify document still exists
 		if not frappe.db.exists(doctype, original_name):
-			frappe.logger().warning(f"[RENAME_AFTER_DELAY] Document {doctype} {original_name} does not exist")
+			frappe.log_error(
+				title=f"[RENAME_AFTER_DELAY] Document {doctype} {original_name} does not exist",
+				message=f"[RENAME_AFTER_DELAY] Document {doctype} {original_name} does not exist"
+			)
 			return
 		
 		# Check if document is submitted - if so, we can't rename it
@@ -614,11 +632,17 @@ def _rename_document_after_delay(doctype: str, original_name: str, new_name: str
 				return
 		except Exception as check_error:
 			# If we can't check docstatus, continue with rename attempt
-			frappe.logger().warning(f"[RENAME_AFTER_DELAY] Could not check docstatus for {doctype} {original_name}: {str(check_error)}")
+			frappe.log_error(
+				title=f"[RENAME_AFTER_DELAY] Could not check docstatus for {doctype} {original_name}",
+				message=f"[RENAME_AFTER_DELAY] Could not check docstatus for {doctype} {original_name}: {str(check_error)}"
+			)
 		
 		# Check if new name still available
 		if frappe.db.exists(doctype, new_name):
-			frappe.logger().warning(f"[RENAME_AFTER_DELAY] Document name {new_name} already exists, cannot rename")
+			frappe.log_error(
+				title=f"[RENAME_AFTER_DELAY] Document name {new_name} already exists",
+				message=f"[RENAME_AFTER_DELAY] Document name {new_name} already exists, cannot rename"
+			)
 			# Queue sync with original name
 			_queue_sync_if_needed(doctype, original_name)
 			return
@@ -639,7 +663,10 @@ def _rename_document_after_delay(doctype: str, original_name: str, new_name: str
 			
 			# Verify original name no longer exists
 			if frappe.db.exists(doctype, original_name):
-				frappe.logger().warning(f"[RENAME_AFTER_DELAY] Original name {original_name} still exists after rename. Waiting and rechecking.")
+				frappe.log_error(
+					title=f"[RENAME_AFTER_DELAY] Original name {original_name} still exists after rename",
+					message=f"[RENAME_AFTER_DELAY] Original name {original_name} still exists after rename. Waiting and rechecking."
+				)
 				time.sleep(1)  # Wait a bit more
 				if frappe.db.exists(doctype, original_name):
 					frappe.logger().error(f"[RENAME_AFTER_DELAY] Rename incomplete - original name still exists")
@@ -679,7 +706,10 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 		
 		# Verify document exists
 		if not frappe.db.exists(doctype, document_name):
-			frappe.logger().warning(f"[RENAME_WITH_NAMING_SERIES] Document {doctype} {document_name} does not exist")
+			frappe.log_error(
+				title=f"[RENAME_WITH_NAMING_SERIES] Document {doctype} {document_name} does not exist",
+				message=f"[RENAME_WITH_NAMING_SERIES] Document {doctype} {document_name} does not exist"
+			)
 			return
 		
 		# Get the document
@@ -704,7 +734,10 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 		if new_name and new_name != document_name:
 			# Check if new name already exists
 			if frappe.db.exists(doctype, new_name):
-				frappe.logger().warning(f"[RENAME_WITH_NAMING_SERIES] Document name {new_name} already exists, cannot rename {doctype} {document_name}. Rename failed, not syncing.")
+				frappe.log_error(
+					title=f"[RENAME_WITH_NAMING_SERIES] Document name {new_name} already exists",
+					message=f"[RENAME_WITH_NAMING_SERIES] Document name {new_name} already exists, cannot rename {doctype} {document_name}. Rename failed, not syncing."
+				)
 				return  # Don't sync if rename failed
 			
 			# Try to rename (even if submitted, with force=True)
@@ -743,7 +776,10 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 				
 				# Verify original name no longer exists
 				if frappe.db.exists(doctype, document_name):
-					frappe.logger().warning(f"[RENAME_WITH_NAMING_SERIES] Original name {document_name} still exists. Waiting and rechecking.")
+					frappe.log_error(
+						title=f"[RENAME_WITH_NAMING_SERIES] Original name {document_name} still exists",
+						message=f"[RENAME_WITH_NAMING_SERIES] Original name {document_name} still exists. Waiting and rechecking."
+					)
 					time.sleep(1)
 					if frappe.db.exists(doctype, document_name):
 						frappe.logger().error(f"[RENAME_WITH_NAMING_SERIES] Rename incomplete - original name still exists. Not syncing.")
@@ -754,14 +790,36 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 				
 				# Set naming series if not already set (this should already be set, but ensure it)
 				if doc.get('naming_series') != naming_series:
-					try:
-						doc.naming_series = naming_series
-						doc.save(ignore_permissions=True)
-						frappe.db.commit()
-					except Exception as naming_series_error:
-						# If we can't set naming_series (e.g., "Value cannot be changed for Series"), 
-						# that's okay - the rename already happened and the series is correct
-						frappe.logger().info(f"[RENAME_WITH_NAMING_SERIES] Could not set naming_series (may already be set): {str(naming_series_error)}")
+					# For submitted documents, update naming_series directly in database
+					if doc.docstatus == 1:
+						try:
+							frappe.db.sql(
+								f"UPDATE `tab{doctype}` SET naming_series = %s WHERE name = %s",
+								(naming_series, new_name)
+							)
+							frappe.db.commit()
+							frappe.log_error(
+								title=f"[RENAME] Set naming_series={naming_series} on submitted document {doctype} {new_name}",
+								message=f"[RENAME] Set naming_series={naming_series} on submitted document {doctype} {new_name} via SQL"
+							)
+							# Reload doc to get updated naming_series
+							doc = frappe.get_doc(doctype, new_name)
+						except Exception as naming_series_error:
+							frappe.log_error(
+								title="Failed to set naming_series on submitted document",
+								message=f"Could not set naming_series on submitted {doctype} {new_name}: {str(naming_series_error)}"
+							)
+					else:
+						# For non-submitted documents, use normal save
+						try:
+							doc.naming_series = naming_series
+							doc.save(ignore_permissions=True)
+							frappe.db.commit()
+						except Exception as naming_series_error:
+							frappe.log_error(
+								title="Failed to set naming_series",
+								message=f"Could not set naming_series on {doctype} {new_name}: {str(naming_series_error)}"
+							)
 				
 				# Update sync_reference if document is not submitted (for submitted, we already set it above)
 				if doc.docstatus != 1 and frappe.db.has_column(doctype, 'sync_reference'):
@@ -777,16 +835,65 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 						)
 				
 				# Only sync if rename was successful
-				frappe.logger().info(f"[RENAME_WITH_NAMING_SERIES] Rename successful, queuing sync for {doctype} {new_name}")
-				frappe.enqueue(
-					_process_sync_on_submit,
-					doctype=doctype,
-					document_name=new_name,
-					queue="short",
-					timeout=300,
-					is_async=True,
-					job_name=f"sync_on_submit_{doctype}_{new_name}"
+				# Wait a moment to ensure rename is fully committed to database
+				import time
+				time.sleep(0.3)
+				
+				# Reload doc to ensure we have the latest state
+				try:
+					doc = frappe.get_doc(doctype, new_name)
+				except frappe.DoesNotExistError:
+					frappe.logger().error(f"[RENAME_WITH_NAMING_SERIES] Cannot load document {doctype} {new_name} after rename. Not queuing sync.")
+					return
+				
+				# Ensure sync_reference and sync_type are set before queuing sync
+				if frappe.db.has_column(doctype, 'sync_reference') and frappe.db.has_column(doctype, 'sync_type'):
+					try:
+						# Verify sync_reference is set (it should be set above, but ensure it)
+						current_sync_ref = frappe.db.get_value(doctype, new_name, 'sync_reference')
+						current_sync_type = frappe.db.get_value(doctype, new_name, 'sync_type')
+						if not current_sync_ref or current_sync_ref != new_name or current_sync_type != 'Local':
+							frappe.db.set_value(doctype, new_name, {
+								'sync_reference': new_name,
+								'sync_type': 'Local'
+							}, update_modified=False)
+							frappe.db.commit()
+							frappe.logger().info(f"[RENAME_WITH_NAMING_SERIES] Set sync_reference={new_name} and sync_type=Local on {doctype} {new_name}")
+					except Exception as sync_field_error:
+						frappe.log_error(
+							title="Failed to set sync fields after rename",
+							message=f"Could not set sync fields on {doctype} {new_name}: {str(sync_field_error)}"
+						)
+						# Continue anyway - sync can still proceed
+				
+				# Queue sync directly after rename succeeds
+				frappe.log_error(
+					title=f"[RENAME] Rename successful for {doctype} {new_name}",
+					message=f"Rename successful for {doctype} from {document_name} to {new_name}, queuing sync"
 				)
+				try:
+					# Prepare document data for sync
+					from havano_sync.havano_sync.tasks.document_preparation import prepare_doc_for_sync
+					doc_data = prepare_doc_for_sync(doc)
+					
+					# Queue sync job directly with the new name
+					queue_sync_job(
+						doctype=doctype,
+						name=new_name,
+						sync_type="Send",
+						document_data=doc_data,
+						priority=8  # Higher priority for individual document syncs
+					)
+					frappe.log_error(
+						title=f"[RENAME] Successfully queued sync for {doctype} {new_name}",
+						message=f"Successfully queued sync for {doctype} {new_name} after rename"
+					)
+				except Exception as queue_error:
+					frappe.log_error(
+						title="Failed to queue sync after rename",
+						message=f"Could not queue sync for {doctype} {new_name} after rename: {str(queue_error)}\nTraceback: {frappe.get_traceback()}"
+					)
+					frappe.logger().error(f"[RENAME_WITH_NAMING_SERIES] Failed to queue sync for {doctype} {new_name}: {str(queue_error)}")
 			except Exception as rename_error:
 				error_msg = str(rename_error)
 				frappe.log_error(
@@ -801,17 +908,34 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 				doc.naming_series = naming_series
 				doc.save(ignore_permissions=True)
 			
-			# Queue sync with current name (name didn't need to change)
-			frappe.logger().info(f"[RENAME_WITH_NAMING_SERIES] Name unchanged, queuing sync for {doctype} {document_name}")
-			frappe.enqueue(
-				_process_sync_on_submit,
-				doctype=doctype,
-				document_name=document_name,
-				queue="short",
-				timeout=300,
-				is_async=True,
-				job_name=f"sync_on_submit_{doctype}_{document_name}"
+			# Queue sync directly with current name (name didn't need to change)
+			frappe.log_error(
+				title=f"[RENAME] Name unchanged for {doctype} {document_name}",
+				message=f"Name unchanged for {doctype} {document_name}, queuing sync"
 			)
+			try:
+				# Prepare document data for sync
+				from havano_sync.havano_sync.tasks.document_preparation import prepare_doc_for_sync
+				doc_data = prepare_doc_for_sync(doc)
+				
+				# Queue sync job directly
+				queue_sync_job(
+					doctype=doctype,
+					name=document_name,
+					sync_type="Send",
+					document_data=doc_data,
+					priority=8  # Higher priority for individual document syncs
+				)
+				frappe.log_error(
+					title=f"[RENAME] Successfully queued sync for {doctype} {document_name}",
+					message=f"Successfully queued sync for {doctype} {document_name}"
+				)
+			except Exception as queue_error:
+				frappe.log_error(
+					title="Failed to queue sync after naming series update",
+					message=f"Could not queue sync for {doctype} {document_name}: {str(queue_error)}"
+				)
+				frappe.logger().error(f"[RENAME_WITH_NAMING_SERIES] Failed to queue sync for {doctype} {document_name}: {str(queue_error)}")
 	except Exception as e:
 		frappe.log_error(
 			title="Failed to rename with naming series on submit",
@@ -827,7 +951,10 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 	This function runs ALL checks and operations in background to avoid blocking submit
 	"""
 	try:
-		frappe.logger().info(f"[SYNC_ON_SUBMIT] Processing {doctype} {document_name} in background")
+		frappe.log_error(
+			title=f"[SYNC_ON_SUBMIT] Processing {doctype} {document_name}",
+			message=f"Processing {doctype} {document_name} in background"
+		)
 		
 		# Get settings in background
 		settings = get_sync_settings()
@@ -843,6 +970,28 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 		
+		# CRITICAL: For Sales Invoice and Payment Entry with naming series configured,
+		# ALWAYS skip this function - the rename function will handle syncing
+		# This prevents double-queuing and ensures sync uses the renamed name
+		if doctype in ("Sales Invoice", "Payment Entry"):
+			naming_series_configured = False
+			expected_naming_series = None
+			if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+				naming_series_configured = True
+				expected_naming_series = settings.payment_entry_naming_series
+			elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+				naming_series_configured = True
+				expected_naming_series = settings.sales_invoice_naming_series
+			
+			if naming_series_configured:
+				# ALWAYS skip - rename function will handle sync
+				# Even if document exists and has correct naming series, skip to avoid double-queuing
+				frappe.log_error(
+					title=f"[SYNC_ON_SUBMIT] Skipping {doctype} {document_name} - naming series configured",
+					message=f"Skipping sync for {doctype} {document_name} - naming series is configured ({expected_naming_series}). Rename function will handle sync with renamed name."
+				)
+				return  # Rename function will queue sync with the correct renamed name
+		
 		# Check if this doctype should auto-sync, or if it's enabled for sending
 		should_auto_sync = doctype in auto_sync_doctypes
 		is_enabled_for_send = should_sync_doctype(doctype, settings, direction="send")
@@ -852,10 +1001,111 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 			return
 		
 		# Get document to check company and prepare for sync
+		# For Sales Invoice and Payment Entry, the document may have been renamed with naming series
+		actual_document_name = document_name
+		doc = None
 		try:
 			doc = frappe.get_doc(doctype, document_name)
 		except frappe.DoesNotExistError:
-			frappe.logger().warning(f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist")
+			# If document doesn't exist, wait a moment in case rename is still in progress
+			import time
+			time.sleep(0.5)
+			try:
+				doc = frappe.get_doc(doctype, document_name)
+			except frappe.DoesNotExistError:
+				# Document doesn't exist with the given name
+				# For Sales Invoice and Payment Entry with naming series, it may have been renamed
+				if doctype in ("Sales Invoice", "Payment Entry"):
+					# Try to find the renamed document by checking for documents with naming series pattern
+					# The rename function sets sync_reference to the new name, so we can't use that
+					# Instead, we'll look for recent documents with the naming series pattern
+					if settings:
+						try:
+							naming_series_to_check = None
+							if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+								naming_series_to_check = settings.payment_entry_naming_series
+							elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+								naming_series_to_check = settings.sales_invoice_naming_series
+							
+							if naming_series_to_check:
+								# Try to find document by checking recent documents with the naming series
+								# This is a best-effort approach - look for documents created in the last hour
+								import re
+								# Extract pattern from naming series (e.g., "ACC-SINV-.YYYY.-" -> "ACC-SINV-")
+								# or "ACC-SINV-STORE1-.YYYY.-" -> "ACC-SINV-STORE1-"
+								pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
+								if pattern_match:
+									prefix = pattern_match.group(1).rstrip('-')
+									# Find documents with this prefix that were created recently and have sync_type = Local
+									# We'll look for documents that match the pattern and were created in the last hour
+									table_name = f"tab{doctype}"
+									recent_docs = frappe.db.sql(f"""
+										SELECT name FROM `{table_name}`
+										WHERE name LIKE %s
+										AND name != %s
+										AND sync_type = 'Local'
+										AND creation >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+										ORDER BY creation DESC
+										LIMIT 1
+									""", (prefix + '%', document_name), as_dict=True)
+									
+									if recent_docs:
+										actual_document_name = recent_docs[0].name
+										try:
+											doc = frappe.get_doc(doctype, actual_document_name)
+											frappe.log_error(
+												title=f"[SYNC_ON_SUBMIT] Found renamed document {doctype} {actual_document_name}",
+												message=f"Found renamed document {doctype} {actual_document_name} by pattern matching (was {document_name})"
+											)
+										except frappe.DoesNotExistError:
+											frappe.log_error(
+												title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist",
+												message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist and could not find renamed version"
+											)
+											return
+									else:
+										frappe.log_error(
+											title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist",
+											message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist and could not find renamed version (no recent documents with pattern {prefix}%)"
+										)
+										return
+								else:
+									frappe.log_error(
+										title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist",
+										message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist and could not parse naming series pattern"
+									)
+									return
+							else:
+								frappe.log_error(
+									title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist (no naming series configured)",
+									message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist (no naming series configured)"
+								)
+								return
+						except Exception as find_error:
+							frappe.log_error(
+								title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist and error finding renamed version",
+								message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist and error finding renamed version: {str(find_error)}"
+							)
+							return
+					else:
+						frappe.log_error(
+							title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist (no settings)",
+							message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist (no settings)"
+						)
+						return
+				else:
+					frappe.log_error(
+						title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist",
+						message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} does not exist"
+					)
+					return
+		
+		# Ensure we have a valid doc object
+		if not doc:
+			frappe.log_error(
+				title=f"[SYNC_ON_SUBMIT] Could not load document {doctype} {actual_document_name}",
+				message=f"[SYNC_ON_SUBMIT] Could not load document {doctype} {actual_document_name}"
+			)
 			return
 		
 		# Check company filter if specified in settings
@@ -921,12 +1171,13 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
 				
 				if has_sync_reference and has_sync_type:
-					frappe.db.set_value(doctype, document_name, {
-						'sync_reference': document_name,
+					# Use actual_document_name (may be renamed) for sync_reference
+					frappe.db.set_value(doctype, actual_document_name, {
+						'sync_reference': actual_document_name,
 						'sync_type': 'Local'
 					}, update_modified=False)
 					frappe.db.commit()
-					frappe.logger().info(f"[SYNC_ON_SUBMIT] Set sync_reference={document_name} and sync_type=Local on {doctype} {document_name}")
+					frappe.logger().info(f"[SYNC_ON_SUBMIT] Set sync_reference={actual_document_name} and sync_type=Local on {doctype} {actual_document_name}")
 			except Exception as e:
 				frappe.log_error(
 					title="Failed to set sync fields on document",
@@ -934,20 +1185,24 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 				)
 		
 		# Queue sync job in background
+		# Use actual_document_name (may be renamed) for syncing
 		doc_data = prepare_doc_for_sync(doc)
 		queue_sync_job(
 			doctype=doctype,
-			name=document_name,
+			name=actual_document_name,
 			sync_type="Send",
 			document_data=doc_data,
 			priority=8  # Higher priority for individual document syncs
 		)
-		frappe.logger().info(f"[SYNC_ON_SUBMIT] Queued sync for {doctype} {document_name}")
+		frappe.log_error(
+			title=f"[SYNC_ON_SUBMIT] Queued sync for {doctype} {actual_document_name}",
+			message=f"Queued sync for {doctype} {actual_document_name}"
+		)
 		
 	except Exception as e:
 		frappe.log_error(
 			title="Process Sync On Submit Failed",
-			message=f"Error in _process_sync_on_submit for {doctype} {document_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
+			message=f"Error in _process_sync_on_submit for {doctype} {document_name} (actual: {actual_document_name if 'actual_document_name' in locals() else 'N/A'}): {str(e)}\nTraceback: {frappe.get_traceback()}"
 		)
 
 
@@ -985,7 +1240,10 @@ def _process_sync_on_update(doctype: str, document_name: str):
 		try:
 			doc = frappe.get_doc(doctype, document_name)
 		except frappe.DoesNotExistError:
-			frappe.logger().warning(f"[SYNC_ON_UPDATE] Document {doctype} {document_name} does not exist")
+			frappe.log_error(
+				title=f"[SYNC_ON_UPDATE] Document {doctype} {document_name} does not exist",
+				message=f"[SYNC_ON_UPDATE] Document {doctype} {document_name} does not exist"
+			)
 			return
 		
 		# Check company filter if specified in settings
@@ -1028,12 +1286,18 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 		
 		# Check if settings are configured
 		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
-			frappe.logger().warning(f"[QUEUE_SYNC] Settings not configured, skipping sync for {doctype} {document_name}")
+			frappe.log_error(
+				title=f"[QUEUE_SYNC] Settings not configured",
+				message=f"[QUEUE_SYNC] Settings not configured, skipping sync for {doctype} {document_name}"
+			)
 			return
 		
 		# Check if sync is enabled
 		if not settings.enable_sync:
-			frappe.logger().warning(f"[QUEUE_SYNC] Sync is disabled, skipping sync for {doctype} {document_name}")
+			frappe.log_error(
+				title=f"[QUEUE_SYNC] Sync is disabled",
+				message=f"[QUEUE_SYNC] Sync is disabled, skipping sync for {doctype} {document_name}"
+			)
 			return
 		
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
@@ -1051,10 +1315,104 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 			return
 		
 		# Get document to check company
+		# For Sales Invoice and Payment Entry, the document may have been renamed with naming series
+		actual_document_name = document_name
+		doc = None
 		try:
 			doc = frappe.get_doc(doctype, document_name)
 		except frappe.DoesNotExistError:
-			frappe.logger().warning(f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist")
+			# If document doesn't exist, wait a moment in case rename is still in progress
+			import time
+			time.sleep(0.5)
+			try:
+				doc = frappe.get_doc(doctype, document_name)
+			except frappe.DoesNotExistError:
+				# Document doesn't exist with the given name
+				# For Sales Invoice and Payment Entry with naming series, it may have been renamed
+				if doctype in ("Sales Invoice", "Payment Entry"):
+					# Try to find the renamed document by checking for documents with naming series pattern
+					if settings:
+						try:
+							naming_series_to_check = None
+							if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
+								naming_series_to_check = settings.payment_entry_naming_series
+							elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+								naming_series_to_check = settings.sales_invoice_naming_series
+							
+							if naming_series_to_check:
+								# Try to find document by checking recent documents with the naming series
+								import re
+								pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
+								if pattern_match:
+									prefix = pattern_match.group(1).rstrip('-')
+									table_name = f"tab{doctype}"
+									recent_docs = frappe.db.sql(f"""
+										SELECT name FROM `{table_name}`
+										WHERE name LIKE %s
+										AND name != %s
+										AND sync_type = 'Local'
+										AND creation >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+										ORDER BY creation DESC
+										LIMIT 1
+									""", (prefix + '%', document_name), as_dict=True)
+									
+									if recent_docs:
+										actual_document_name = recent_docs[0].name
+										try:
+											doc = frappe.get_doc(doctype, actual_document_name)
+											frappe.log_error(
+												title=f"[QUEUE_SYNC] Found renamed document {doctype} {actual_document_name}",
+												message=f"Found renamed document {doctype} {actual_document_name} by pattern matching (was {document_name})"
+											)
+										except frappe.DoesNotExistError:
+											frappe.log_error(
+												title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist",
+												message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist and could not find renamed version"
+											)
+											return
+									else:
+										frappe.log_error(
+											title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist",
+											message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist and could not find renamed version (no recent documents with pattern {prefix}%)"
+										)
+										return
+								else:
+									frappe.log_error(
+										title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist",
+										message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist and could not parse naming series pattern"
+									)
+									return
+							else:
+								frappe.log_error(
+									title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist (no naming series configured)",
+									message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist (no naming series configured)"
+								)
+								return
+						except Exception as find_error:
+							frappe.log_error(
+								title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist and error finding renamed version",
+								message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist and error finding renamed version: {str(find_error)}"
+							)
+							return
+					else:
+						frappe.log_error(
+							title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist (no settings)",
+							message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist (no settings)"
+						)
+						return
+				else:
+					frappe.log_error(
+						title=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist",
+						message=f"[QUEUE_SYNC] Document {doctype} {document_name} does not exist"
+					)
+					return
+		
+		# Ensure we have a valid doc object
+		if not doc:
+			frappe.log_error(
+				title=f"[QUEUE_SYNC] Could not load document {doctype} {actual_document_name}",
+				message=f"[QUEUE_SYNC] Could not load document {doctype} {actual_document_name}"
+			)
 			return
 		
 		# Check company filter if specified in settings
@@ -1113,12 +1471,13 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 			has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
 			
 			if has_sync_reference and has_sync_type:
-				frappe.db.set_value(doctype, document_name, {
-					'sync_reference': document_name,
+				# Use actual_document_name (may be renamed) for sync_reference
+				frappe.db.set_value(doctype, actual_document_name, {
+					'sync_reference': actual_document_name,
 					'sync_type': 'Local'
 				}, update_modified=False)
 				frappe.db.commit()
-				frappe.logger().info(f"[QUEUE_SYNC] Set sync_reference={document_name} and sync_type=Local on {doctype} {document_name}")
+				frappe.logger().info(f"[QUEUE_SYNC] Set sync_reference={actual_document_name} and sync_type=Local on {doctype} {actual_document_name}")
 		except Exception as e:
 			frappe.log_error(
 				title="Failed to ensure sync fields before queuing sync",
@@ -1127,20 +1486,20 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 			# Continue anyway - try to queue sync
 		
 		# Queue sync job
+		# Use actual_document_name (may be renamed) for queuing
 		doc_data = prepare_doc_for_sync(doc)
 		queue_sync_job(
 			doctype=doctype,
-			name=document_name,
+			name=actual_document_name,
 			sync_type="Send",
 			document_data=doc_data,
 			priority=8  # Higher priority for individual document syncs
 		)
-		frappe.logger().info(f"[QUEUE_SYNC] Successfully queued sync for {doctype} {document_name}")
 		
 	except Exception as e:
 		frappe.log_error(
 			title="Failed to queue sync after rename",
-			message=f"Could not queue sync for {doctype} {document_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
+			message=f"Could not queue sync for {doctype} {document_name} (actual: {actual_document_name if 'actual_document_name' in locals() else 'N/A'}): {str(e)}\nTraceback: {frappe.get_traceback()}"
 		)
 
 

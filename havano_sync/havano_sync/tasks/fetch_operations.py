@@ -56,6 +56,19 @@ def fetch_document_from_remote(doctype: str, name: str):
 		# Check if document already exists locally by name - skip if it does
 		# Documents fetched from remote should use their original name (no -Local suffix)
 		if frappe.db.exists(doctype, name):
+			# If document exists, verify it has sync_type="Remote" (it should have been fetched before)
+			# If it has sync_type="Local", that's a problem - it means it was created locally, not fetched
+			if frappe.db.has_column(doctype, 'sync_type'):
+				existing_sync_type = frappe.db.get_value(doctype, name, 'sync_type')
+				if existing_sync_type == "Local":
+					frappe.log_error(
+						title=f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Local'",
+						message=f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Local'. This document was created locally, not fetched. Skipping fetch to avoid overwriting local document."
+					)
+				elif existing_sync_type == "Remote":
+					frappe.logger().info(f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Remote'. It was previously fetched. Skipping fetch.")
+				else:
+					frappe.logger().info(f"[FETCH] Document {doctype} {name} already exists locally with sync_type='{existing_sync_type}'. Skipping fetch.")
 			return {
 				"status": "skipped",
 				"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
@@ -145,7 +158,10 @@ def fetch_document_from_remote(doctype: str, name: str):
 											continue
 									except Exception as check_error:
 										# If we can't check, skip it to be safe
-										frappe.logger().warning(f"Could not check company for {link_doctype} {link_value}: {str(check_error)}")
+										frappe.log_error(
+											title=f"Could not check company for {link_doctype} {link_value}",
+											message=f"Could not check company for {link_doctype} {link_value}: {str(check_error)}"
+										)
 										continue
 								elif link_doctype == 'Company':
 									# Only fetch the specified company
@@ -193,7 +209,10 @@ def fetch_document_from_remote(doctype: str, name: str):
 															continue
 													except Exception as check_error:
 														# If we can't check, skip it to be safe
-														frappe.logger().warning(f"Could not check company for {link_doctype} {link_value}: {str(check_error)}")
+														frappe.log_error(
+											title=f"Could not check company for {link_doctype} {link_value}",
+											message=f"Could not check company for {link_doctype} {link_value}: {str(check_error)}"
+										)
 														continue
 												elif link_doctype == 'Company':
 													# Only fetch the specified company
@@ -215,7 +234,10 @@ def fetch_document_from_remote(doctype: str, name: str):
 			for link_doctype, link_value, field_path in links_to_fetch:
 				# Skip if we're trying to fetch the same document we're currently fetching (circular dependency)
 				if link_doctype == doctype and link_value == name:
-					frappe.logger().warning(f"Skipping circular dependency: {doctype} {name} references itself in {field_path}")
+					frappe.log_error(
+						title=f"Skipping circular dependency: {doctype} {name}",
+						message=f"Skipping circular dependency: {doctype} {name} references itself in {field_path}"
+					)
 					continue
 				
 				# Skip if already fetched in this batch
@@ -419,7 +441,10 @@ def fetch_document_from_remote(doctype: str, name: str):
 						except frappe.DoesNotExistError:
 							# Link doesn't exist, try to fetch it one more time
 							try:
-								frappe.logger().warning(f"Link {field.options} {link_value} not found, attempting to fetch again")
+								frappe.log_error(
+									title=f"Link {field.options} {link_value} not found",
+									message=f"Link {field.options} {link_value} not found, attempting to fetch again"
+								)
 								fetch_result = fetch_document_from_remote(field.options, link_value)
 								frappe.db.commit()  # Commit after fetch
 								if fetch_result.get("status") != "success" and fetch_result.get("status") != "skipped":
@@ -709,7 +734,10 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 			# Remove -Local suffix if present (doctype names should never have -Local suffix)
 			if doctype_name and doctype_name.endswith("-Local"):
 				doctype_name = doctype_name[:-6]  # Remove "-Local" (6 characters)
-				frappe.logger().warning(f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {doctype_name} instead.")
+				frappe.log_error(
+					title=f"Found doctype name with -Local suffix: {syncable.doctypes}",
+					message=f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {doctype_name} instead."
+				)
 			
 			# Skip important doctypes - they should only sync from local to remote
 			important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
