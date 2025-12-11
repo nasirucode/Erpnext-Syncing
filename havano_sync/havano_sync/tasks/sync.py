@@ -558,10 +558,14 @@ def fetch_item_prices_and_exchange_rates():
 		}
 
 
-def trigger_fetch_on_login():
+def trigger_fetch_on_login(login_manager=None):
 	"""
 	Trigger fetch cron job when user logs in
 	This runs in background to avoid blocking login
+	Fetches multiple doctypes in parallel for faster execution
+	
+	Args:
+		login_manager: LoginManager instance passed by Frappe's on_login hook
 	"""
 	try:
 		from havano_sync.havano_sync.tasks.fetch_operations import fetch_all_documents_from_remote
@@ -571,15 +575,36 @@ def trigger_fetch_on_login():
 		if not settings or not settings.enable_sync:
 			return
 		
-		# Trigger fetch in background (non-blocking)
-		frappe.enqueue(
-			"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
-			doctype=None,  # Fetch all enabled doctypes
-			queue="default",
-			timeout=600,  # 10 minutes timeout
-			is_async=True,
-			job_name="fetch_all_on_login"
-		)
+		# Get syncable doctypes with fetch enabled
+		syncable_doctypes = get_syncable_doctypes(settings)
+		
+		# Fetch each doctype in parallel for faster execution
+		# This allows multiple doctypes to be fetched simultaneously
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			
+			# Remove -Local suffix if present
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			# Skip exempted doctypes
+			if doctype_name in ("User", "Sales Invoice", "Payment Entry", "Sales Order"):
+				continue
+			
+			# Check if fetch is enabled
+			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+			if not fetch_enabled:
+				continue
+			
+			# Enqueue each doctype fetch in parallel (short queue for faster processing)
+			frappe.enqueue(
+				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+				doctype=doctype_name,
+				queue="short",  # Use short queue for faster processing
+				timeout=300,  # 5 minutes timeout per doctype
+				is_async=True,
+				job_name=f"fetch_on_login_{doctype_name}"
+			)
 	except Exception as e:
 		# Silently fail - don't block login if fetch fails
 		frappe.log_error(

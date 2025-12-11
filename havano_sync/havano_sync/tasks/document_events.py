@@ -843,10 +843,10 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 							doc.save(ignore_permissions=True)
 							frappe.db.commit()
 						except Exception as naming_series_error:
-								frappe.log_error(
-									title="Failed to set naming_series",
-									message=f"Could not set naming_series on {doctype} {new_name}: {str(naming_series_error)}"
-								)
+									frappe.log_error(
+										title="Failed to set naming_series",
+										message=f"Could not set naming_series on {doctype} {new_name}: {str(naming_series_error)}"
+									)
 				
 				# Update sync_reference if document is not submitted (for submitted, we already set it above)
 				if doc.docstatus != 1 and frappe.db.has_column(doctype, 'sync_reference'):
@@ -1286,16 +1286,21 @@ def _process_sync_on_update(doctype: str, document_name: str):
 				# Document doesn't belong to the selected company, skip syncing
 				return
 		
-		# Queue sync job in background
+		# Directly sync instead of queuing another job (we're already in a background job)
+		# This prevents duplicate queue entries
+		from havano_sync.havano_sync.tasks.sync_operations import sync_document_to_remote
 		doc_data = prepare_doc_for_sync(doc)
-		queue_sync_job(
+		sync_document_to_remote(
 			doctype=doctype,
 			name=document_name,
-			sync_type="Send",
-			document_data=doc_data,
-			priority=8  # Higher priority for individual document syncs
+			target_url=settings.remote_url,
+			api_key=settings.admin_api_key,
+			api_secret=None,  # Will be decrypted in function
+			force_create=False,
+			sync_method="Auto",
+			settings=settings
 		)
-		frappe.logger().info(f"[SYNC_ON_UPDATE] Queued sync for {doctype} {document_name}")
+		frappe.logger().info(f"[SYNC_ON_UPDATE] Synced {doctype} {document_name}")
 		
 	except Exception as e:
 		frappe.log_error(
