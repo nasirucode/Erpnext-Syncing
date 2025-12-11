@@ -31,6 +31,7 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		# (e.g., Error Log, Activity Log, etc.)
 		system_doctypes = [
 			"DocType",  # Never sync DocType definitions!
+			"User",  # Exempt User doctype from syncing
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -211,6 +212,7 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 		# CRITICAL: Never sync DocType definitions themselves - only document instances
 		system_doctypes = [
 			"DocType",  # Never sync DocType definitions!
+			"User",  # Exempt User doctype from syncing
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -231,9 +233,9 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 		# Store document info before queuing background job
 		document_name = doc.name
 		
-		# For Sales Invoice and Payment Entry, check if naming series is configured
+		# For Sales Invoice, Payment Entry, and Quotation, check if naming series is configured
 		# If so, queue rename with naming series before syncing
-		if doctype in ("Sales Invoice", "Payment Entry"):
+		if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
 			settings = get_sync_settings()
 			if settings:
 				naming_series_to_use = None
@@ -241,6 +243,8 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 					naming_series_to_use = settings.payment_entry_naming_series
 				elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
 					naming_series_to_use = settings.sales_invoice_naming_series
+				elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
+					naming_series_to_use = settings.quotation_naming_series
 				
 				if naming_series_to_use:
 					# Queue rename with naming series, then sync
@@ -302,6 +306,7 @@ def sync_document_on_update(doc, method: Optional[str] = None):
 		# CRITICAL: Never sync DocType definitions themselves - only document instances
 		system_doctypes = [
 			"DocType",  # Never sync DocType definitions!
+			"User",  # Exempt User doctype from syncing
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
@@ -415,9 +420,9 @@ def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 			)
 			return
 		
-		# For Sales Invoice and Payment Entry, check if naming series is configured
+		# For Sales Invoice, Payment Entry, and Quotation, check if naming series is configured
 		# If so, skip adding -Local suffix - the naming series will be used instead
-		if doctype in ("Sales Invoice", "Payment Entry"):
+		if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
 			try:
 				settings = get_sync_settings()
 				if settings:
@@ -435,6 +440,19 @@ def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 						)
 						return
 					elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
+						# Naming series configured, skip -Local suffix
+						# The document will be renamed with naming series in sync_operations.py
+						frappe.enqueue(
+							_queue_sync_if_needed,
+							doctype=doctype,
+							document_name=original_name,
+							queue="short",
+							timeout=300,
+							is_async=True,
+							job_name=f"queue_sync_{doctype}_{original_name}"
+						)
+						return
+					elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
 						# Naming series configured, skip -Local suffix
 						# The document will be renamed with naming series in sync_operations.py
 						frappe.enqueue(
@@ -698,8 +716,9 @@ def _rename_document_after_delay(doctype: str, original_name: str, new_name: str
 
 def _rename_with_naming_series_on_submit(doctype: str, document_name: str, naming_series: str):
 	"""
-	Rename Sales Invoice or Payment Entry with naming series on submit, then sync
+	Rename Sales Invoice, Payment Entry, or Quotation with naming series on submit, then sync
 	This runs in background after submit completes
+	Only synced for submitted documents (docstatus == 1)
 	"""
 	try:
 		frappe.logger().info(f"[RENAME_WITH_NAMING_SERIES] Processing {doctype} {document_name} with naming series {naming_series}")
@@ -714,6 +733,14 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 		
 		# Get the document
 		doc = frappe.get_doc(doctype, document_name)
+		
+		# For Quotation, only process if submitted (docstatus == 1)
+		if doctype == "Quotation" and doc.docstatus != 1:
+			frappe.log_error(
+				title=f"[RENAME_WITH_NAMING_SERIES] Quotation {document_name} is not submitted",
+				message=f"[RENAME_WITH_NAMING_SERIES] Quotation {document_name} is not submitted (docstatus={doc.docstatus}). Only submitted Quotations are synced."
+			)
+			return
 		
 		# Check if document already has the correct naming series
 		current_naming_series = doc.get('naming_series', '')
@@ -816,10 +843,10 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 							doc.save(ignore_permissions=True)
 							frappe.db.commit()
 						except Exception as naming_series_error:
-							frappe.log_error(
-								title="Failed to set naming_series",
-								message=f"Could not set naming_series on {doctype} {new_name}: {str(naming_series_error)}"
-							)
+								frappe.log_error(
+									title="Failed to set naming_series",
+									message=f"Could not set naming_series on {doctype} {new_name}: {str(naming_series_error)}"
+								)
 				
 				# Update sync_reference if document is not submitted (for submitted, we already set it above)
 				if doc.docstatus != 1 and frappe.db.has_column(doctype, 'sync_reference'):
@@ -878,7 +905,7 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 					
 					# Queue sync job directly with the new name
 					queue_sync_job(
-						doctype=doctype,
+					doctype=doctype,
 						name=new_name,
 						sync_type="Send",
 						document_data=doc_data,
@@ -920,7 +947,7 @@ def _rename_with_naming_series_on_submit(doctype: str, document_name: str, namin
 				
 				# Queue sync job directly
 				queue_sync_job(
-					doctype=doctype,
+				doctype=doctype,
 					name=document_name,
 					sync_type="Send",
 					document_data=doc_data,
@@ -970,10 +997,10 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 		
-		# CRITICAL: For Sales Invoice and Payment Entry with naming series configured,
+		# CRITICAL: For Sales Invoice, Payment Entry, and Quotation with naming series configured,
 		# ALWAYS skip this function - the rename function will handle syncing
 		# This prevents double-queuing and ensures sync uses the renamed name
-		if doctype in ("Sales Invoice", "Payment Entry"):
+		if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
 			naming_series_configured = False
 			expected_naming_series = None
 			if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
@@ -982,6 +1009,9 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 			elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
 				naming_series_configured = True
 				expected_naming_series = settings.sales_invoice_naming_series
+			elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
+				naming_series_configured = True
+				expected_naming_series = settings.quotation_naming_series
 			
 			if naming_series_configured:
 				# ALWAYS skip - rename function will handle sync
@@ -1001,7 +1031,7 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 			return
 		
 		# Get document to check company and prepare for sync
-		# For Sales Invoice and Payment Entry, the document may have been renamed with naming series
+		# For Sales Invoice, Payment Entry, and Quotation, the document may have been renamed with naming series
 		actual_document_name = document_name
 		doc = None
 		try:
@@ -1014,8 +1044,8 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 				doc = frappe.get_doc(doctype, document_name)
 			except frappe.DoesNotExistError:
 				# Document doesn't exist with the given name
-				# For Sales Invoice and Payment Entry with naming series, it may have been renamed
-				if doctype in ("Sales Invoice", "Payment Entry"):
+				# For Sales Invoice, Payment Entry, and Quotation with naming series, it may have been renamed
+				if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
 					# Try to find the renamed document by checking for documents with naming series pattern
 					# The rename function sets sync_reference to the new name, so we can't use that
 					# Instead, we'll look for recent documents with the naming series pattern
@@ -1026,6 +1056,8 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 								naming_series_to_check = settings.payment_entry_naming_series
 							elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
 								naming_series_to_check = settings.sales_invoice_naming_series
+							elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
+								naming_series_to_check = settings.quotation_naming_series
 							
 							if naming_series_to_check:
 								# Try to find document by checking recent documents with the naming series
@@ -1315,7 +1347,7 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 			return
 		
 		# Get document to check company
-		# For Sales Invoice and Payment Entry, the document may have been renamed with naming series
+		# For Sales Invoice, Payment Entry, and Quotation, the document may have been renamed with naming series
 		actual_document_name = document_name
 		doc = None
 		try:
@@ -1328,8 +1360,8 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 				doc = frappe.get_doc(doctype, document_name)
 			except frappe.DoesNotExistError:
 				# Document doesn't exist with the given name
-				# For Sales Invoice and Payment Entry with naming series, it may have been renamed
-				if doctype in ("Sales Invoice", "Payment Entry"):
+				# For Sales Invoice, Payment Entry, and Quotation with naming series, it may have been renamed
+				if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
 					# Try to find the renamed document by checking for documents with naming series pattern
 					if settings:
 						try:
@@ -1338,6 +1370,8 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 								naming_series_to_check = settings.payment_entry_naming_series
 							elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
 								naming_series_to_check = settings.sales_invoice_naming_series
+							elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
+								naming_series_to_check = settings.quotation_naming_series
 							
 							if naming_series_to_check:
 								# Try to find document by checking recent documents with the naming series

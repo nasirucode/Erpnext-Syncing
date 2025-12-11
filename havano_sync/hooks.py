@@ -246,6 +246,12 @@ scheduler_events = {
 # 	"havano_sync.auth.validate"
 # ]
 
+# On Login Hook
+# -------------
+# Function to call when user logs in
+
+on_login = "havano_sync.havano_sync.tasks.sync.trigger_fetch_on_login"
+
 # Automatically update python controller files with type annotations for this app.
 # export_python_type_annotations = True
 

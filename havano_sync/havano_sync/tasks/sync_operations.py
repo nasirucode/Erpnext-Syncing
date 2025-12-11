@@ -701,6 +701,15 @@ def sync_document_to_remote(
 	start_time = time.time()
 	
 	try:
+		# Exempt User doctype from syncing
+		if doctype == "User":
+			return {
+				"status": "skipped",
+				"message": "User doctype is exempted from syncing",
+				"doctype": doctype,
+				"name": name
+			}
+		
 		# Get decrypted API secret if not provided
 		if not api_secret and settings:
 			api_secret = get_decrypted_api_secret(settings)
@@ -759,26 +768,26 @@ def sync_document_to_remote(
 								if frappe.db.has_column(doctype, 'sync_type'):
 									renamed_sync_type = frappe.db.get_value(doctype, actual_name, 'sync_type')
 									if renamed_sync_type == "Remote":
-										frappe.log_error(
-											f"[SYNC] Found renamed document {doctype} {actual_name} but sync_type='Remote'",
-											f"[SYNC] Found renamed document {doctype} {actual_name} but it has sync_type='Remote'. Skipping sync."
-										)
+										# frappe.log_error(
+										# 	f"[SYNC] Found renamed document {doctype} {actual_name} but sync_type='Remote'",
+										# 	f"[SYNC] Found renamed document {doctype} {actual_name} but it has sync_type='Remote'. Skipping sync."
+										# )
 										return {
 											"status": "skipped",
 											"doctype": doctype,
 											"name": name,
 											"message": f"Document {doctype} {name} was renamed to {actual_name} but it has sync_type='Remote' and should not be synced to remote"
 										}
-								frappe.log_error(
-									f"[SYNC] Found renamed document {doctype} {actual_name}",
-									f"Found renamed document {doctype} {actual_name} by pattern matching (was {name})"
-								)
+								# frappe.log_error(
+								# 	f"[SYNC] Found renamed document {doctype} {actual_name}",
+								# 	f"Found renamed document {doctype} {actual_name} by pattern matching (was {name})"
+								# )
 							else:
 								# Could not find renamed document - skip sync
-								frappe.log_error(
-									f"[SYNC] Document {doctype} {name} not found",
-									f"[SYNC] Document {doctype} {name} not found and could not find renamed version (no recent documents with pattern {prefix}%)"
-								)
+								# frappe.log_error(
+								# 	f"[SYNC] Document {doctype} {name} not found",
+								# 	f"[SYNC] Document {doctype} {name} not found and could not find renamed version (no recent documents with pattern {prefix}%)"
+								# )
 								return {
 									"status": "skipped",
 									"doctype": doctype,
@@ -787,10 +796,10 @@ def sync_document_to_remote(
 								}
 						else:
 							# Could not parse naming series pattern
-							frappe.log_error(
-								f"[SYNC] Document {doctype} {name} not found - could not parse naming series",
-								f"[SYNC] Document {doctype} {name} not found and could not parse naming series pattern"
-							)
+							# frappe.log_error(
+							# 	f"[SYNC] Document {doctype} {name} not found - could not parse naming series",
+							# 	f"[SYNC] Document {doctype} {name} not found and could not parse naming series pattern"
+							# )
 							return {
 								"status": "skipped",
 								"doctype": doctype,
@@ -808,18 +817,18 @@ def sync_document_to_remote(
 							if name.startswith(expected_prefix):
 								# Name matches the expected pattern - proceed with sync
 								actual_name = name
-								frappe.log_error(
-									f"[SYNC] Document {doctype} {name} name matches expected naming series pattern {expected_prefix}",
-									f"[SYNC] Document {doctype} {name} name matches expected naming series pattern. Proceeding with sync."
-								)
+								# frappe.log_error(
+								# 	f"[SYNC] Document {doctype} {name} name matches expected naming series pattern {expected_prefix}",
+								# 	f"[SYNC] Document {doctype} {name} name matches expected naming series pattern. Proceeding with sync."
+								# )
 							else:
 								# Name doesn't match pattern - document hasn't been renamed yet
 								doc_check = frappe.get_doc(doctype, name)
 								current_naming_series = doc_check.get('naming_series', '')
-								frappe.log_error(
-									f"[SYNC] Document {doctype} {name} name does not match expected naming series pattern",
-									f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Name doesn't match pattern {expected_prefix}. Skipping sync - rename should queue sync."
-								)
+								# frappe.log_error(
+								# 	f"[SYNC] Document {doctype} {name} name does not match expected naming series pattern",
+								# 	f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Name doesn't match pattern {expected_prefix}. Skipping sync - rename should queue sync."
+								# )
 								return {
 									"status": "skipped",
 									"doctype": doctype,
@@ -831,10 +840,10 @@ def sync_document_to_remote(
 							doc_check = frappe.get_doc(doctype, name)
 							current_naming_series = doc_check.get('naming_series', '')
 							if current_naming_series != naming_series_to_check:
-								frappe.log_error(
-									f"[SYNC] Document {doctype} {name} naming_series field does not match",
-									f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Skipping sync - rename should queue sync."
-								)
+								# frappe.log_error(
+								# 	f"[SYNC] Document {doctype} {name} naming_series field does not match",
+								# 	f"[SYNC] Document {doctype} {name} has naming series {current_naming_series} but expected {naming_series_to_check}. Skipping sync - rename should queue sync."
+								# )
 								return {
 									"status": "skipped",
 									"doctype": doctype,
@@ -849,28 +858,28 @@ def sync_document_to_remote(
 					local_name = f"{name}-Local"
 					if frappe.db.exists(doctype, local_name):
 						actual_name = local_name
-						frappe.log_error(
-							f"Document {doctype} {name} not found, using renamed name {actual_name}",
-							f"Document {doctype} {name} not found, using renamed name {actual_name}"
-						)
+						# frappe.log_error(
+						# 	f"Document {doctype} {name} not found, using renamed name {actual_name}",
+						# 	f"Document {doctype} {name} not found, using renamed name {actual_name}"
+						# )
 		
 		try:
 			doc = frappe.get_doc(doctype, actual_name)
 		except Exception as get_doc_error:
-			frappe.log_error(
-				f"[SYNC] Failed to get document {doctype} {actual_name}",
-				f"[SYNC] Failed to get document {doctype} {actual_name}: {str(get_doc_error)}\nTraceback: {frappe.get_traceback()}"
-			)
+			# frappe.log_error(
+			# 	f"[SYNC] Failed to get document {doctype} {actual_name}",
+			# 	f"[SYNC] Failed to get document {doctype} {actual_name}: {str(get_doc_error)}\nTraceback: {frappe.get_traceback()}"
+			# )
 			raise
 		
 		# CRITICAL: Never sync documents with sync_type="Remote" to remote
 		# These documents came from remote, so they should not be synced back
 		doc_sync_type = getattr(doc, 'sync_type', None)
 		if doc_sync_type == "Remote":
-			frappe.log_error(
-				f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote'",
-				f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote' (document came from remote)"
-			)
+			# frappe.log_error(
+			# 	f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote'",
+			# 	f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote' (document came from remote)"
+			# )
 			return {
 				"status": "skipped",
 				"doctype": doctype,
@@ -882,7 +891,6 @@ def sync_document_to_remote(
 		if frappe.db.has_column(doctype, 'sync_type'):
 			db_sync_type = frappe.db.get_value(doctype, actual_name, 'sync_type')
 			if db_sync_type == "Remote":
-				frappe.logger().info(f"[SYNC] Skipping sync for {doctype} {actual_name} - sync_type is 'Remote' (document came from remote)")
 				return {
 					"status": "skipped",
 					"doctype": doctype,
@@ -1168,11 +1176,11 @@ def sync_document_to_remote(
 			# Set sync_type to "Local" (since this is being sent from local)
 			doc_data['sync_type'] = "Local"
 			# Note: docstatus is already set above for submittable doctypes, so we don't need to set it again here
-		else:
-			frappe.log_error(
-				f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable",
-				f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable - sync_reference and sync_type will NOT be set"
-			)
+		# else:
+		# 	frappe.log_error(
+		# 		f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable",
+		# 		f"[SYNC] {doctype} {actual_name} is NOT compulsory and NOT syncable - sync_reference and sync_type will NOT be set"
+		# 	)
 		
 		# Clean up None values and empty strings that might cause issues
 		# Convert None to empty string for string fields, remove None from dict
@@ -1396,10 +1404,10 @@ def sync_document_to_remote(
 				except (DocumentNotFoundError, requests.exceptions.HTTPError) as e:
 					if isinstance(e, requests.exceptions.HTTPError) and e.response and e.response.status_code == 404:
 						# Document doesn't exist, try to create instead
-						frappe.log_error(
-							f"[SYNC] Document {doctype} {update_name} not found",
-							f"Document {doctype} {update_name} not found, creating instead"
-						)
+						# frappe.log_error(
+						# 	f"[SYNC] Document {doctype} {update_name} not found",
+						# 	f"Document {doctype} {update_name} not found, creating instead"
+						# )
 						doc_exists = False
 					else:
 						raise
@@ -2050,8 +2058,8 @@ def sync_document_to_remote(
 		
 		
 		# After successful sync, rename remote document if sync_reference is set and different from remote name
-		# Only for Sales Invoice and Payment Entry
-		if action in ("created", "updated") and doctype in ("Sales Invoice", "Payment Entry") and settings and hasattr(doc, 'sync_reference') and doc.sync_reference:
+		# Only for Sales Invoice, Payment Entry, and Quotation
+		if action in ("created", "updated") and doctype in ("Sales Invoice", "Payment Entry", "Quotation") and settings and hasattr(doc, 'sync_reference') and doc.sync_reference:
 			try:
 				# Get the remote document name
 				remote_doc_name = None
