@@ -30,6 +30,15 @@ def fetch_document_from_remote(doctype: str, name: str):
 	can only sync from local to remote, not from remote to local.
 	"""
 	try:
+		# Exempt User doctype from fetching
+		if doctype == "User":
+			return {
+				"status": "skipped",
+				"message": "User doctype is exempted from fetching",
+				"doctype": doctype,
+				"name": name
+			}
+		
 		# Important doctypes should only sync from local to remote, not fetch from remote
 		important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
 		if doctype in important_doctypes:
@@ -690,6 +699,14 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 	can only sync from local to remote, not from remote to local.
 	"""
 	try:
+		# Exempt User doctype from fetching
+		if doctype == "User":
+			return {
+				"status": "skipped",
+				"message": "User doctype is exempted from fetching",
+				"doctype": doctype
+			}
+		
 		# Important doctypes should only sync from local to remote, not fetch from remote
 		important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
 		if doctype and doctype in important_doctypes:
@@ -738,6 +755,14 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 					title=f"Found doctype name with -Local suffix: {syncable.doctypes}",
 					message=f"Found doctype name with -Local suffix in syncable doctypes: {syncable.doctypes}. Using {doctype_name} instead."
 				)
+			
+			# Exempt User doctype from fetching
+			if doctype_name == "User":
+				results["skipped"].append({
+					"doctype": doctype_name,
+					"message": "User doctype is exempted from fetching"
+				})
+				continue
 			
 			# Skip important doctypes - they should only sync from local to remote
 			important_doctypes = {"Sales Invoice", "Payment Entry", "Sales Order"}
@@ -940,16 +965,29 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 								"message": "Document already exists locally, skipped"
 							})
 					except DocumentNotFoundError:
-						results["errors"].append({
-							"doctype": doctype_name,
-							"name": doc_name,
-							"message": "Document not found on remote server"
-						})
+						# Document not found on remote - silently skip (may have been deleted)
+						continue
 					except Exception as fetch_error:
+						error_msg = str(fetch_error)
+						# Silently skip common validation/link errors that shouldn't be shown to user
+						skip_patterns = [
+							"not found",
+							"appears multiple times",
+							"Item Price appears multiple times"
+						]
+						# Check if error contains "Item X not found" pattern
+						if "Item " in error_msg and " not found" in error_msg:
+							# Silently skip - linked item doesn't exist
+							continue
+						# Check other skip patterns
+						if any(skip_pattern in error_msg for skip_pattern in skip_patterns):
+							# Silently skip - document may have been deleted or has validation issues
+							continue
+						# Only add unexpected errors to results
 						results["errors"].append({
 							"doctype": doctype_name,
 							"name": doc_name,
-							"message": f"Error fetching document: {str(fetch_error)}"
+							"message": f"Error fetching document: {error_msg}"
 						})
 						
 			except Exception as e:

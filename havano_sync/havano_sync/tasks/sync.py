@@ -486,3 +486,103 @@ def process_queue_cron_job():
 		)
 
 
+def fetch_item_prices_and_exchange_rates():
+	"""
+	Fetch item prices and exchange rates from remote
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.fetch_operations import fetch_all_documents_from_remote
+		
+		results = {
+			"item_prices": None,
+			"exchange_rates": None,
+			"status": "success"
+		}
+		
+		# Fetch Item Prices
+		try:
+			item_price_results = fetch_all_documents_from_remote(doctype="Item Price")
+			results["item_prices"] = item_price_results
+		except Exception as item_price_error:
+			frappe.log_error(
+				"Failed to fetch Item Prices from remote",
+				f"Error fetching Item Prices: {str(item_price_error)}\n{frappe.get_traceback()}"
+			)
+			results["item_prices"] = {
+				"status": "error",
+				"message": str(item_price_error)
+			}
+			results["status"] = "partial"
+		
+		# Fetch Currency Exchange (try both possible doctype names)
+		exchange_doctypes = ["Currency Exchange", "Currency Exchange Rate"]
+		exchange_fetched = False
+		
+		for exchange_doctype in exchange_doctypes:
+			if not frappe.db.exists("DocType", exchange_doctype):
+				continue
+			
+			try:
+				exchange_results = fetch_all_documents_from_remote(doctype=exchange_doctype)
+				results["exchange_rates"] = exchange_results
+				exchange_fetched = True
+				break
+			except Exception as exchange_error:
+				# Try next doctype name
+				continue
+		
+		if not exchange_fetched:
+			frappe.log_error(
+				"Failed to fetch Currency Exchange from remote",
+				f"Could not find or fetch Currency Exchange doctype. Tried: {', '.join(exchange_doctypes)}"
+			)
+			results["exchange_rates"] = {
+				"status": "error",
+				"message": f"Currency Exchange doctype not found. Tried: {', '.join(exchange_doctypes)}"
+			}
+			if results["status"] == "success":
+				results["status"] = "partial"
+		
+		return results
+		
+	except Exception as e:
+		frappe.log_error(
+			"Fetch Item Prices and Exchange Rates Failed",
+			f"Error: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": str(e),
+			"item_prices": None,
+			"exchange_rates": None
+		}
+
+
+def trigger_fetch_on_login():
+	"""
+	Trigger fetch cron job when user logs in
+	This runs in background to avoid blocking login
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.fetch_operations import fetch_all_documents_from_remote
+		
+		# Check if sync is enabled before triggering fetch
+		settings = get_sync_settings()
+		if not settings or not settings.enable_sync:
+			return
+		
+		# Trigger fetch in background (non-blocking)
+		frappe.enqueue(
+			"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+			doctype=None,  # Fetch all enabled doctypes
+			queue="default",
+			timeout=600,  # 10 minutes timeout
+			is_async=True,
+			job_name="fetch_all_on_login"
+		)
+	except Exception as e:
+		# Silently fail - don't block login if fetch fails
+		frappe.log_error(
+			"Failed to trigger fetch on login",
+			f"Error triggering fetch on login: {str(e)}\n{frappe.get_traceback()}"
+		)

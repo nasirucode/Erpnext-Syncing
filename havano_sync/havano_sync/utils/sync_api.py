@@ -114,9 +114,9 @@ class SyncAPI:
 						error_details['frappe_error'] = remote_error
 					# Check if this is an expected error (404/DoesNotExistError)
 					# This is normal when checking if a document exists
+					# Treat all 404 errors as expected to suppress error messages
 					if e.response.status_code == 404:
-						if 'exc_type' in error_response and 'DoesNotExistError' in error_response.get('exc_type', ''):
-							is_expected_error = True
+						is_expected_error = True
 					# Try to get traceback if available
 					if 'traceback' in error_response:
 						error_details['frappe_traceback'] = error_response['traceback']
@@ -535,16 +535,11 @@ class SyncAPI:
 		try:
 			return self._make_request("GET", endpoint, params=params)
 		except requests.exceptions.HTTPError as e:
-			# 404 or DoesNotExistError means document doesn't exist - this is expected
+			# 404 means document doesn't exist - this is expected, suppress error message
 			if e.response and e.response.status_code == 404:
-				# Check if it's a DoesNotExistError (expected)
-				try:
-					error_response = e.response.json()
-					if 'exc_type' in error_response and 'DoesNotExistError' in error_response.get('exc_type', ''):
-						# Document doesn't exist - raise a specific exception that can be caught
-						raise DocumentNotFoundError(f"Document {doctype} {name} not found on remote server")
-				except:
-					pass
+				# Document doesn't exist - raise a specific exception that can be caught silently
+				# Use a simple message without details to prevent error messages from being displayed
+				raise DocumentNotFoundError("Document not found")
 			# Re-raise other errors
 			raise
 	

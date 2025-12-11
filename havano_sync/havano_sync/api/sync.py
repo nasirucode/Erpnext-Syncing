@@ -10,7 +10,8 @@ from havano_sync.havano_sync.tasks.sync import (
 	fetch_document_from_remote,
 	fetch_all_documents_from_remote,
 	get_sync_settings,
-	get_decrypted_api_secret
+	get_decrypted_api_secret,
+	fetch_item_prices_and_exchange_rates
 )
 from havano_sync.havano_sync.tasks.utils import fix_field_options_with_local_suffix, fix_renamed_doctypes
 from havano_sync.havano_sync.utils.sync_api import SyncAPI
@@ -375,3 +376,12 @@ def find_document_by_sync_reference(doctype: str, sync_reference: str, sync_type
 		frappe.logger().error(f"Error finding document by sync_reference: {str(e)}")
 		return None
 
+@frappe.whitelist()
+def trigger_fetch_item_prices_and_exchange_rates():
+	"""
+	API endpoint to manually trigger fetch of item prices and exchange rates
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_item_prices_and_exchange_rates
+	"""
+	return fetch_item_prices_and_exchange_rates()

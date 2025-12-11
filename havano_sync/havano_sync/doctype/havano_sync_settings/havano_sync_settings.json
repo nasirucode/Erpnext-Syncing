@@ -13,9 +13,10 @@
   "section_break_hmdv",
   "company",
   "section_break_naming",
+  "sales_invoice_naming_series",
   "payment_entry_naming_series",
   "column_break_naming_series",
-  "sales_invoice_naming_series",
+  "quotation_naming_series",
   "section_break_csvt",
   "syncable_doctypes"
  ],
@@ -92,13 +93,19 @@
   {
    "fieldname": "section_break_csvt",
    "fieldtype": "Section Break"
+  },
+  {
+   "description": "Naming series to use for Quotation when syncing to remote. This will be saved locally and sent to remote. Leave empty to use the original naming series from the document.",
+   "fieldname": "quotation_naming_series",
+   "fieldtype": "Data",
+   "label": "Quotation Naming Series"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-12-09 12:17:27.516267",
+ "modified": "2025-12-11 07:45:03.187612",
  "modified_by": "Administrator",
  "module": "Havano Sync",
  "name": "Havano Sync Settings",
