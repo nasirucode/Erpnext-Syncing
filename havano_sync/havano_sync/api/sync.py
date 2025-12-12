@@ -43,14 +43,20 @@ def trigger_sync_single(doctype: str, name: str):
 
 
 @frappe.whitelist()
-def test_connection(remote_url=None, admin_api_key=None, admin_api_secret=None):
+def test_connection(remote_url=None, admin_api_key=None, admin_api_secret=None, run_migration=False):
 	"""
 	API endpoint to test connection to remote server
 	Accepts optional parameters to test with form values before saving
 	
+	Args:
+		remote_url: Optional remote URL to test
+		admin_api_key: Optional API key to test
+		admin_api_secret: Optional API secret to test
+		run_migration: If True, run bench migrate on remote server after successful connection test
+	
 	Usage:
 		POST /api/method/havano_sync.havano_sync.api.sync.test_connection
-		POST /api/method/havano_sync.havano_sync.api.sync.test_connection?remote_url=...&admin_api_key=...&admin_api_secret=...
+		POST /api/method/havano_sync.havano_sync.api.sync.test_connection?remote_url=...&admin_api_key=...&admin_api_secret=...&run_migration=1
 	"""
 	try:
 		# Get from saved settings (password field needs to be read from database to be decrypted)
@@ -107,10 +113,20 @@ def test_connection(remote_url=None, admin_api_key=None, admin_api_secret=None):
 		success, error_message = api_client.test_connection()
 		
 		if success:
+			migration_result = None
+			if run_migration:
+				# Run migration on remote server
+				migration_success, migration_message = api_client.run_remote_migration()
+				migration_result = {
+					"success": migration_success,
+					"message": migration_message
+				}
+			
 			return {
 				"status": "success",
 				"message": f"Connection successful! Connected to {test_url}",
-				"target_url": test_url
+				"target_url": test_url,
+				"migration": migration_result
 			}
 		else:
 			return {
@@ -385,3 +401,68 @@ def trigger_fetch_item_prices_and_exchange_rates():
 		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_item_prices_and_exchange_rates
 	"""
 	return fetch_item_prices_and_exchange_rates()
+
+
+@frappe.whitelist()
+def run_migration():
+	"""
+	API endpoint to run bench migrate on the local server
+	This is called from remote server to trigger migration
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.run_migration
+	"""
+	try:
+		import subprocess
+		import os
+		import frappe
+		
+		# Get the bench path (parent of sites directory)
+		sites_path = frappe.get_site_path()
+		bench_path = os.path.dirname(os.path.dirname(sites_path))
+		
+		# Get site name
+		site_name = frappe.local.site
+		
+		# Run bench migrate command
+		# Use bench --site <site> migrate
+		cmd = ["bench", "--site", site_name, "migrate"]
+		
+		# Change to bench directory
+		os.chdir(bench_path)
+		
+		# Run the command
+		result = subprocess.run(
+			cmd,
+			capture_output=True,
+			text=True,
+			timeout=300  # 5 minute timeout
+		)
+		
+		if result.returncode == 0:
+			return {
+				"status": "success",
+				"message": f"Migration completed successfully for site {site_name}",
+				"output": result.stdout
+			}
+		else:
+			return {
+				"status": "error",
+				"message": f"Migration failed with return code {result.returncode}",
+				"error": result.stderr,
+				"output": result.stdout
+			}
+	except subprocess.TimeoutExpired:
+		return {
+			"status": "error",
+			"message": "Migration timed out after 5 minutes"
+		}
+	except Exception as e:
+		frappe.log_error(
+			title="Migration execution failed",
+			message=f"Error running migration: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to run migration: {str(e)}"
+		}

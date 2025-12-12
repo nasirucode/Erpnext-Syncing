@@ -48,16 +48,6 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		if is_submittable_doctype(doctype):
 			return  # Skip submittable doctypes in on_create, they will sync on_submit
 		
-		# Check if document name already has -Local suffix
-		# If it does, it means rename already happened, so we can sync now
-		# If it doesn't, the rename will happen in after_commit and sync will be triggered there
-		# This prevents double syncing
-		if not doc.name.endswith("-Local"):
-			# Document will be renamed in after_commit, sync will be triggered there
-			# Skip syncing here to avoid syncing with wrong name
-			frappe.logger().debug(f"Skipping sync for {doctype} {doc.name} - will sync after rename to {doc.name}-Local")
-			return
-		
 		settings = get_sync_settings()
 		
 		# Check if settings are configured
@@ -79,14 +69,11 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		if not should_auto_sync and not is_enabled_for_send:
 			return
 		
-		# Check sync_status for send-only doctypes (skip if already synced)
-		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
-		if is_send_only_doctype(doctype, settings):
-			ensure_sync_status_field_exists(doctype)
-			if frappe.db.has_column(doctype, 'sync_status'):
-				sync_status = frappe.db.get_value(doctype, doc.name, 'sync_status')
-				if sync_status == 'Synced':
-					return  # Skip if already synced
+		# Check sync_status - skip if already synced or fetched (avoid duplicates)
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status
+		ensure_sync_status_field_exists(doctype)
+		if has_sync_status(doctype, doc.name):
+			return  # Skip if already synced or fetched
 		
 		# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
 		# This must be done before syncing
@@ -141,15 +128,6 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 					message=f"Could not ensure sync fields exist locally for {doctype}: {str(e)}"
 				)
 			
-			# Note: The -Local suffix is now added by add_local_suffix_after_insert function
-			# which runs for all doctypes including submittable ones
-			# This ensures all documents get the -Local suffix
-			# Reload the document to get the updated name (with -Local suffix if it was renamed)
-			try:
-				doc.reload()
-			except:
-				pass
-			
 			# Set sync_reference and sync_type on the document before syncing
 			# This ensures linked documents can reference this document by name
 			try:
@@ -162,7 +140,6 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 				
 				if has_sync_reference and has_sync_type:
 					# Set the fields using db_set to avoid triggering hooks
-					# Use the current document name (which may have -Local suffix)
 					current_name = doc.name
 					frappe.db.set_value(doctype, current_name, {
 						'sync_reference': current_name,
@@ -273,13 +250,6 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 					)
 					return  # Exit early, rename function will queue sync
 		
-		# Check if document has -Local suffix, if not, log a warning
-		# Note: We can't rename it now because it's already submitted
-		if not document_name.endswith("-Local"):
-			frappe.log_error(
-				title=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} was submitted without -Local suffix",
-				message=f"[SYNC_ON_SUBMIT] Document {doctype} {document_name} was submitted without -Local suffix. The rename may not have completed yet. Sync will proceed with current name."
-			)
 		
 		# Queue ALL processing in background - this ensures submit doesn't block at all
 		# All checks, field setup, and sync will happen in background
@@ -362,174 +332,13 @@ def sync_document_on_update(doc, method: Optional[str] = None):
 
 def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 	"""
-	Add "-Local" suffix to document name after insert for all syncable and compulsory doctypes
-	This runs for ALL documents including submittable ones
-	
-	IMPORTANT: This function does minimal work to avoid blocking save.
-	Rename happens after commit (non-blocking), sync is queued in background.
-	
-	Flow:
-	1. Save completes (after_insert hook fires)
-	2. Minimal checks only (no heavy operations)
-	3. Register rename callback to run after commit (non-blocking)
-	4. After rename, sync will be queued in background
+	DEPRECATED: -Local suffix renaming has been removed.
+	This function is kept for backward compatibility but does nothing.
+	Sync is now handled via sync_status field to avoid duplicates.
 	"""
-	# CRITICAL: Never rename DocType definitions themselves - only document instances
-	# This MUST be the absolute first check - before any other code
-	if not hasattr(doc, 'doctype') or doc.doctype == "DocType":
-		return
-	
-	try:
-		doctype = doc.doctype
-		
-		# Prevent processing system/internal doctypes to avoid recursion
-		system_doctypes = [
-			"Error Log", "Activity Log", "Comment", "Version", "Communication",
-			"Email Queue", "Email Queue Recipient", "Notification Log",
-			"Scheduled Job Log", "Scheduled Job Type",
-			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings",
-			"GL Entry", "Stock Ledger Entry", "Payment Ledger Entry", "Repost Payment Ledger",
-			"Route History", "Webform", "Access Log", "Portal Settings", "User", "DocType"
-		]
-		
-		if doctype in system_doctypes:
-			return
-		
-		# Store document info
-		if not hasattr(doc, 'name') or not doc.name:
-			return
-		
-		original_name = doc.name
-		
-		# Check if document has sync_type="Remote" - if so, do not rename with -Local suffix
-		# Documents fetched from remote should keep their original name
-		try:
-			sync_type = getattr(doc, 'sync_type', None)
-			if sync_type == "Remote":
-				# Document is from remote, do not rename - keep original name
-				frappe.logger().info(f"[ADD_LOCAL_SUFFIX] Document {doctype} {original_name} has sync_type=Remote, skipping -Local suffix")
-				# Still queue sync in case it needs to be synced back
-				frappe.enqueue(
-					_queue_sync_if_needed,
-					doctype=doctype,
-					document_name=original_name,
-					queue="short",
-					timeout=300,
-					is_async=True,
-					job_name=f"queue_sync_{doctype}_{original_name}"
-				)
-				return
-		except Exception:
-			# If we can't check sync_type, continue with normal flow
-			pass
-		
-		# Check if name already has -Local suffix
-		if original_name.endswith("-Local"):
-			# Already renamed, just queue sync in background
-			frappe.enqueue(
-				_queue_sync_if_needed,
-				doctype=doctype,
-				document_name=original_name,
-				queue="short",
-				timeout=300,
-				is_async=True,
-				job_name=f"queue_sync_{doctype}_{original_name}"
-			)
-			return
-		
-		# For Sales Invoice, Payment Entry, and Quotation, check if naming series is configured
-		# If so, skip adding -Local suffix - the naming series will be used instead
-		if doctype in ("Sales Invoice", "Payment Entry", "Quotation"):
-			try:
-				settings = get_sync_settings()
-				if settings:
-					if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
-						# Naming series configured, skip -Local suffix
-						# The document will be renamed with naming series in sync_operations.py
-						frappe.enqueue(
-							_queue_sync_if_needed,
-							doctype=doctype,
-							document_name=original_name,
-							queue="short",
-							timeout=300,
-							is_async=True,
-							job_name=f"queue_sync_{doctype}_{original_name}"
-						)
-						return
-					elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
-						# Naming series configured, skip -Local suffix
-						# The document will be renamed with naming series in sync_operations.py
-						frappe.enqueue(
-							_queue_sync_if_needed,
-							doctype=doctype,
-							document_name=original_name,
-							queue="short",
-							timeout=300,
-							is_async=True,
-							job_name=f"queue_sync_{doctype}_{original_name}"
-						)
-						return
-					elif doctype == "Quotation" and hasattr(settings, 'quotation_naming_series') and settings.quotation_naming_series:
-						# Naming series configured, skip -Local suffix
-						# The document will be renamed with naming series in sync_operations.py
-						frappe.enqueue(
-							_queue_sync_if_needed,
-							doctype=doctype,
-							document_name=original_name,
-							queue="short",
-							timeout=300,
-							is_async=True,
-							job_name=f"queue_sync_{doctype}_{original_name}"
-						)
-						return
-			except Exception:
-				# If we can't check settings, continue with -Local suffix
-				pass
-		
-		# Prepare new name
-		new_name = f"{original_name}-Local"
-		
-		# Check if the new name already exists
-		if frappe.db.exists(doctype, new_name):
-			frappe.log_error(
-				title=f"[ADD_LOCAL_SUFFIX] Document name {new_name} already exists",
-				message=f"[ADD_LOCAL_SUFFIX] Document name {new_name} already exists, keeping original name {original_name}"
-			)
-			# Queue sync with original name in background
-			frappe.enqueue(
-				_queue_sync_if_needed,
-				doctype=doctype,
-				document_name=original_name,
-				queue="short",
-				timeout=300,
-				is_async=True,
-				job_name=f"queue_sync_{doctype}_{original_name}"
-			)
-			return
-		
-		# For submittable doctypes, rename with minimal delay (1 second) to prevent submission before rename
-		# For non-submittable doctypes, use longer delay (10 seconds)
-		delay_seconds = 1 if is_submittable_doctype(doctype) else 10
-		rename_function = _rename_document_immediately if is_submittable_doctype(doctype) else _rename_document_after_delay
-		
-		# Queue rename job in background - this ensures save is not delayed at all
-		frappe.enqueue(
-			rename_function,
-			doctype=doctype,
-			original_name=original_name,
-			new_name=new_name,
-			delay_seconds=delay_seconds,
-			queue="short",
-			timeout=300,
-			is_async=True,
-			job_name=f"rename_{doctype}_{original_name}"
-		)
-		
-	except Exception as e:
-		frappe.log_error(
-			f"Add Local Suffix After Insert Failed: {doc.doctype} {doc.name if hasattr(doc, 'name') else 'new document'}",
-			frappe.get_traceback()
-		)
+	# Function kept for backward compatibility but no longer performs any action
+	# All -Local suffix renaming has been removed
+	pass
 
 
 def _rename_document_immediately(doctype: str, original_name: str, new_name: str, delay_seconds: int = 1):
@@ -1014,14 +823,12 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 		
-		# Check sync_status for send-only doctypes (skip if already synced)
-		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
-		if is_send_only_doctype(doctype, settings):
+		# Check sync_status - skip if already synced or fetched (avoid duplicates)
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
+		if should_sync_doctype(doctype, settings, direction="send"):
 			ensure_sync_status_field_exists(doctype)
-			if frappe.db.has_column(doctype, 'sync_status'):
-				sync_status = frappe.db.get_value(doctype, document_name, 'sync_status')
-				if sync_status == 'Synced':
-					return  # Skip if already synced
+			if has_sync_status(doctype, document_name):
+				return  # Skip if already synced or fetched
 		
 		# CRITICAL: For Sales Invoice, Payment Entry, and Quotation with naming series configured,
 		# ALWAYS skip this function - the rename function will handle syncing
@@ -1294,14 +1101,12 @@ def _process_sync_on_update(doctype: str, document_name: str):
 		if not should_auto_sync and not is_enabled_for_send:
 			return
 		
-		# Check sync_status for send-only doctypes (skip if already synced)
-		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
-		if is_send_only_doctype(doctype, settings):
+		# Check sync_status - skip if already synced or fetched (avoid duplicates)
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
+		if should_sync_doctype(doctype, settings, direction="send"):
 			ensure_sync_status_field_exists(doctype)
-			if frappe.db.has_column(doctype, 'sync_status'):
-				sync_status = frappe.db.get_value(doctype, document_name, 'sync_status')
-				if sync_status == 'Synced':
-					return  # Skip if already synced
+			if has_sync_status(doctype, document_name):
+				return  # Skip if already synced or fetched
 		
 		# Get document to check company and prepare for sync
 		try:
@@ -1349,27 +1154,17 @@ def _process_sync_on_update(doctype: str, document_name: str):
 def _queue_sync_if_needed(doctype: str, document_name: str):
 	"""
 	Queue sync if document should be synced
-	This runs in background after rename completes
+	Uses sync_status to avoid duplicates
 	"""
 	try:
-		frappe.logger().info(f"[QUEUE_SYNC] Checking if sync needed for {doctype} {document_name}")
-		
 		settings = get_sync_settings()
 		
 		# Check if settings are configured
 		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
-			frappe.log_error(
-				title=f"[QUEUE_SYNC] Settings not configured",
-				message=f"[QUEUE_SYNC] Settings not configured, skipping sync for {doctype} {document_name}"
-			)
 			return
 		
 		# Check if sync is enabled
 		if not settings.enable_sync:
-			frappe.log_error(
-				title=f"[QUEUE_SYNC] Sync is disabled",
-				message=f"[QUEUE_SYNC] Sync is disabled, skipping sync for {doctype} {document_name}"
-			)
 			return
 		
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
@@ -1379,12 +1174,15 @@ def _queue_sync_if_needed(doctype: str, document_name: str):
 		should_auto_sync = doctype in auto_sync_doctypes
 		is_enabled_for_send = should_sync_doctype(doctype, settings, direction="send")
 		
-		frappe.logger().info(f"[QUEUE_SYNC] {doctype} - should_auto_sync: {should_auto_sync}, is_enabled_for_send: {is_enabled_for_send}")
-		
 		# Only sync if it's an auto-sync doctype OR if it's enabled for sending
 		if not should_auto_sync and not is_enabled_for_send:
-			frappe.logger().info(f"[QUEUE_SYNC] {doctype} is not auto-sync and not enabled for send, skipping")
 			return
+		
+		# Check sync_status - skip if already synced or fetched (avoid duplicates)
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status
+		ensure_sync_status_field_exists(doctype)
+		if has_sync_status(doctype, document_name):
+			return  # Skip if already synced or fetched
 		
 		# Get document to check company
 		# For Sales Invoice, Payment Entry, and Quotation, the document may have been renamed with naming series

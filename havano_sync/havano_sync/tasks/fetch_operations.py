@@ -62,22 +62,20 @@ def fetch_document_from_remote(doctype: str, name: str):
 		if not should_sync_doctype(doctype, settings, direction="fetch"):
 			frappe.throw(f"Doctype {doctype} is not configured for fetching from remote")
 		
+		# Check sync_status - skip if already synced or fetched (avoid duplicates)
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status
+		ensure_sync_status_field_exists(doctype)
+		if has_sync_status(doctype, name):
+			sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+			return {
+				"status": "skipped",
+				"message": f"Document {doctype} {name} already has sync_status='{sync_status}', skipping to avoid duplicate",
+				"doctype": doctype,
+				"name": name
+			}
+		
 		# Check if document already exists locally by name - skip if it does
-		# Documents fetched from remote should use their original name (no -Local suffix)
 		if frappe.db.exists(doctype, name):
-			# If document exists, verify it has sync_type="Remote" (it should have been fetched before)
-			# If it has sync_type="Local", that's a problem - it means it was created locally, not fetched
-			if frappe.db.has_column(doctype, 'sync_type'):
-				existing_sync_type = frappe.db.get_value(doctype, name, 'sync_type')
-				if existing_sync_type == "Local":
-					frappe.log_error(
-						title=f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Local'",
-						message=f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Local'. This document was created locally, not fetched. Skipping fetch to avoid overwriting local document."
-					)
-				elif existing_sync_type == "Remote":
-					frappe.logger().info(f"[FETCH] Document {doctype} {name} already exists locally with sync_type='Remote'. It was previously fetched. Skipping fetch.")
-				else:
-					frappe.logger().info(f"[FETCH] Document {doctype} {name} already exists locally with sync_type='{existing_sync_type}'. Skipping fetch.")
 			return {
 				"status": "skipped",
 				"message": f"Document {doctype} {name} already exists locally. Skipping fetch.",
@@ -509,19 +507,16 @@ def fetch_document_from_remote(doctype: str, name: str):
 			local_doc.insert(ignore_permissions=True, ignore_links=False)
 			frappe.db.commit()
 			
-			# Explicitly set sync_type after insert to ensure it's saved
-			# This is important because sync_type might not be in the DocType yet
+			# Set sync_status to "Fetched" after successful insert
 			try:
-				meta = frappe.get_meta(doctype)
-				has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
-				if has_sync_type:
-					frappe.db.set_value(doctype, name, 'sync_type', 'Remote', update_modified=False)
+				if frappe.db.has_column(doctype, 'sync_status'):
+					frappe.db.set_value(doctype, name, 'sync_status', 'Fetched', update_modified=False)
 					frappe.db.commit()
-			except Exception as sync_type_error:
-				# If we can't set sync_type, log but don't fail
+					frappe.logger().info(f"Set sync_status='Fetched' for {doctype} {name}")
+			except Exception as sync_status_error:
 				frappe.log_error(
-					title="Failed to set sync_type on fetched document",
-					message=f"Could not set sync_type=Remote on {doctype} {name}: {str(sync_type_error)}"
+					title="Failed to set sync_status on fetched document",
+					message=f"Could not set sync_status='Fetched' on {doctype} {name}: {str(sync_status_error)}"
 				)
 		except (frappe.DuplicateEntryError, frappe.UniqueValidationError) as e:
 			# Document already exists locally - skip and return success
@@ -572,17 +567,16 @@ def fetch_document_from_remote(doctype: str, name: str):
 						local_doc.insert(ignore_permissions=True, ignore_links=False)
 						frappe.db.commit()
 						
-						# Explicitly set sync_type after insert
+						# Set sync_status to "Fetched" after successful insert
 						try:
-							meta = frappe.get_meta(doctype)
-							has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
-							if has_sync_type:
-								frappe.db.set_value(doctype, name, 'sync_type', 'Remote', update_modified=False)
+							if frappe.db.has_column(doctype, 'sync_status'):
+								frappe.db.set_value(doctype, name, 'sync_status', 'Fetched', update_modified=False)
 								frappe.db.commit()
-						except Exception as sync_type_error:
+								frappe.logger().info(f"Set sync_status='Fetched' for {doctype} {name}")
+						except Exception as sync_status_error:
 							frappe.log_error(
-								title="Failed to set sync_type on fetched document",
-								message=f"Could not set sync_type=Remote on {doctype} {name}: {str(sync_type_error)}"
+								title="Failed to set sync_status on fetched document",
+								message=f"Could not set sync_status='Fetched' on {doctype} {name}: {str(sync_status_error)}"
 							)
 						
 						frappe.logger().info(f"Successfully created {doctype} {name} after handling LinkValidationError")
@@ -938,17 +932,18 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 							local_doc.insert(ignore_permissions=True)
 							frappe.db.commit()
 							
-							# Explicitly set sync_type after insert to ensure it's saved
+							# Set sync_status to "Fetched" after successful insert
 							try:
-								meta = frappe.get_meta(doctype_name)
-								has_sync_type = any(f.fieldname == 'sync_type' for f in meta.fields)
-								if has_sync_type:
-									frappe.db.set_value(doctype_name, doc_name, 'sync_type', 'Remote', update_modified=False)
+								from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
+								ensure_sync_status_field_exists(doctype_name)
+								if frappe.db.has_column(doctype_name, 'sync_status'):
+									frappe.db.set_value(doctype_name, doc_name, 'sync_status', 'Fetched', update_modified=False)
 									frappe.db.commit()
-							except Exception as sync_type_error:
+									frappe.logger().info(f"Set sync_status='Fetched' for {doctype_name} {doc_name}")
+							except Exception as sync_status_error:
 								frappe.log_error(
-									title="Failed to set sync_type on fetched document",
-									message=f"Could not set sync_type=Remote on {doctype_name} {doc_name}: {str(sync_type_error)}"
+									title="Failed to set sync_status on fetched document",
+									message=f"Could not set sync_status='Fetched' on {doctype_name} {doc_name}: {str(sync_status_error)}"
 								)
 							
 							results["success"].append({

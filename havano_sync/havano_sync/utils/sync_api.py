@@ -616,4 +616,64 @@ class SyncAPI:
 		except Exception as e:
 			error_msg = f"Connection test failed: {str(e)}"
 			return False, error_msg
+	
+	def run_remote_migration(self):
+		"""
+		Run bench migrate on the remote instance
+		Returns: (success: bool, message: str)
+		"""
+		try:
+			endpoint = "havano_sync.havano_sync.api.sync.run_migration"
+			response = self._make_request("POST", endpoint, data={})
+			
+			if response and isinstance(response, dict):
+				if response.get("status") == "success":
+					return True, response.get("message", "Migration completed successfully")
+				else:
+					return False, response.get("message", "Migration failed")
+			else:
+				return True, "Migration command executed (response format unknown)"
+		except requests.exceptions.HTTPError as e:
+			# Check if app is not installed
+			error_text = ""
+			error_text_lower = ""
+			if e.response:
+				try:
+					error_response = e.response.json()
+					# Handle different error response formats
+					if 'message' in error_response:
+						error_text = str(error_response['message'])
+						# Handle list format ["Traceback..."]
+						if isinstance(error_response['message'], list):
+							error_text = " ".join(str(m) for m in error_response['message'])
+					elif 'exc' in error_response:
+						error_text = str(error_response['exc'])
+						if isinstance(error_response['exc'], list):
+							error_text = " ".join(str(ex) for ex in error_response['exc'])
+					error_text_lower = error_text.lower()
+				except:
+					error_text = e.response.text[:1000] if e.response.text else ""
+					error_text_lower = error_text.lower()
+			
+			# Check for app not installed error (check in both original and lower case)
+			if ("app havano_sync is not installed" in error_text_lower or 
+				"havano_sync is not installed" in error_text_lower or
+				"appnotinstallederror" in error_text_lower):
+				error_msg = "Havano Sync app is not installed on the remote server. Please install the app on the remote server to enable migration."
+			elif e.response and e.response.status_code == 403:
+				error_msg = "Permission denied: API user does not have permission to run migration. Please ensure the API user has 'System Manager' role."
+			elif e.response and e.response.status_code == 404:
+				error_msg = "Migration endpoint not found. Please ensure havano_sync app is installed on the remote server."
+			elif e.response and e.response.status_code == 417:
+				# 417 Expectation Failed - usually means app not installed or endpoint not available
+				if "not installed" in error_text_lower:
+					error_msg = "Havano Sync app is not installed on the remote server. Please install the app on the remote server to enable migration."
+				else:
+					error_msg = "Migration endpoint not available. Please ensure havano_sync app is installed on the remote server."
+			else:
+				error_msg = f"HTTP error {e.response.status_code if e.response else 'unknown'}: {str(e)}"
+			return False, error_msg
+		except Exception as e:
+			error_msg = f"Failed to run migration: {str(e)}"
+			return False, error_msg
 

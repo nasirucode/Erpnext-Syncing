@@ -139,7 +139,6 @@ after_install = "havano_sync.install.after_install"
 
 doc_events = {
 	"*": {
-		"after_insert": "havano_sync.havano_sync.tasks.sync.add_local_suffix_after_insert",
 		"on_submit": "havano_sync.havano_sync.tasks.sync.sync_document_on_submit",
 		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
 	},

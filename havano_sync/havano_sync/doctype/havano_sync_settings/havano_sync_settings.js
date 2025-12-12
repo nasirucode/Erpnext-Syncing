@@ -24,22 +24,36 @@ frappe.ui.form.on("Havano Sync Settings", {
 
 			// Password fields cannot be read from form - must be saved first
 			// Save form if there are changes, then test connection
-			const testConnection = function() {
+			const testConnection = function(run_migration = false) {
 				frappe.call({
 					method: "havano_sync.havano_sync.api.sync.test_connection",
 					args: {
 						// Don't pass values - API will read from saved document
 						// This ensures password field is properly decrypted
+						run_migration: run_migration
 					},
 					freeze: true,
-					freeze_message: __("Testing connection to {0}...", [frm.doc.remote_url]),
+					freeze_message: run_migration 
+						? __("Testing connection and running migration on {0}...", [frm.doc.remote_url])
+						: __("Testing connection to {0}...", [frm.doc.remote_url]),
 					callback: function(r) {
 						if (r.message) {
 							if (r.message.status === "success") {
+								let message = r.message.message || __("Connection successful!");
+								
+								// Show migration result if it was run
+								if (r.message.migration) {
+									if (r.message.migration.success) {
+										message += "\n" + __("Migration completed successfully on remote server.");
+									} else {
+										message += "\n" + __("Migration failed: {0}", [r.message.migration.message || "Unknown error"]);
+									}
+								}
+								
 								frappe.show_alert({
-									message: r.message.message || __("Connection successful!"),
-									indicator: "green"
-								}, 5);
+									message: message,
+									indicator: (r.message.migration && !r.message.migration.success) ? "orange" : "green"
+								}, 8);
 							} else {
 								frappe.show_alert({
 									message: r.message.message || __("Connection failed. Please check your settings."),
@@ -59,27 +73,42 @@ frappe.ui.form.on("Havano Sync Settings", {
 					}
 				});
 			};
-
+			
 			// Save form first if there are changes (required for password field)
-			if (frm.is_dirty()) {
-				// Check if password is provided (if it's a new value, it won't be encrypted yet)
-				if (frm.doc.admin_api_secret && frm.doc.admin_api_secret.trim() !== '') {
-					frm.save().then(function() {
-						testConnection();
-					}).catch(function(err) {
-						// If save fails, still try to test with previously saved values
-						testConnection();
-					});
+			const executeTest = function(run_migration) {
+				if (frm.is_dirty()) {
+					// Check if password is provided (if it's a new value, it won't be encrypted yet)
+					if (frm.doc.admin_api_secret && frm.doc.admin_api_secret.trim() !== '') {
+						frm.save().then(function() {
+							testConnection(run_migration);
+						}).catch(function(err) {
+							// If save fails, still try to test with previously saved values
+							testConnection(run_migration);
+						});
+					} else {
+						frappe.show_alert({
+							message: __("Please configure Admin API Secret before testing connection. Save the form first if you've entered a new password."),
+							indicator: "orange"
+						}, 5);
+					}
 				} else {
-					frappe.show_alert({
-						message: __("Please configure Admin API Secret before testing connection. Save the form first if you've entered a new password."),
-						indicator: "orange"
-					}, 5);
+					// No changes, test with saved values
+					testConnection(run_migration);
 				}
-			} else {
-				// No changes, test with saved values
-				testConnection();
-			}
+			};
+			
+			// Ask if user wants to run migration
+			frappe.confirm(
+				__("Do you want to run migration on the remote server after testing connection? This will execute 'bench migrate' on the remote instance."),
+				function() {
+					// Yes - run migration
+					executeTest(true);
+				},
+				function() {
+					// No - just test connection
+					executeTest(false);
+				}
+			);
 		}, __("Actions"));
 
 		// Add Get Apps button

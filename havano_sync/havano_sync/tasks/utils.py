@@ -202,7 +202,7 @@ def is_send_only_doctype(doctype: str, settings) -> bool:
 
 def ensure_sync_status_field_exists(doctype: str) -> bool:
 	"""
-	Ensure sync_status field exists on local doctype for send-only doctypes
+	Ensure sync_status field exists on local doctype for all syncable doctypes
 	Creates the field if it doesn't exist
 	
 	Args:
@@ -214,6 +214,19 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 	try:
 		# Check if field already exists
 		if frappe.db.has_column(doctype, 'sync_status'):
+			# Update field options if it exists but has old options
+			try:
+				doctype_doc = frappe.get_doc("DocType", doctype)
+				for field in doctype_doc.fields:
+					if field.fieldname == 'sync_status':
+						if field.options != "\nSynced\nFetched":
+							field.options = "\nSynced\nFetched"
+							doctype_doc.save(ignore_permissions=True)
+							frappe.db.commit()
+							frappe.logger().info(f"Updated sync_status field options for {doctype}")
+						break
+			except Exception:
+				pass
 			return True
 		
 		# Get the doctype meta
@@ -231,13 +244,13 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 			if isinstance(idx, (int, float)):
 				max_idx = max(max_idx, int(idx))
 		
-		# Add sync_status field
+		# Add sync_status field with Synced and Fetched options
 		doctype_doc.append('fields', {
 			"fieldname": "sync_status",
 			"fieldtype": "Select",
 			"label": "Sync Status",
-			"options": "\nPending\nSynced\nFailed",
-			"default": "Pending",
+			"options": "\nSynced\nFetched",
+			"default": "",
 			"read_only": 0,
 			"no_copy": 1,
 			"idx": max_idx + 1
@@ -255,6 +268,26 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 			title=f"Failed to add sync_status field to {doctype}",
 			message=f"Error: {str(e)}\n{frappe.get_traceback()}"
 		)
+		return False
+
+
+def has_sync_status(doctype: str, name: str) -> bool:
+	"""
+	Check if document has sync_status set (Synced or Fetched)
+	
+	Args:
+		doctype: Document type
+		name: Document name
+		
+	Returns:
+		True if sync_status is set, False otherwise
+	"""
+	try:
+		if not frappe.db.has_column(doctype, 'sync_status'):
+			return False
+		sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+		return sync_status in ('Synced', 'Fetched')
+	except Exception:
 		return False
 
 

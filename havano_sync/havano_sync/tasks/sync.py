@@ -108,9 +108,9 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 				if not send_enabled:
 					continue
 			
-				# Ensure sync_status field exists for send-only doctypes
-				from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
-				if is_send_only_doctype(doctype_name, settings):
+				# Ensure sync_status field exists for all syncable doctypes
+				from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, should_sync_doctype
+				if should_sync_doctype(doctype_name, settings, direction="send"):
 					ensure_sync_status_field_exists(doctype_name)
 			
 				# For submittable doctypes, only sync submitted documents (docstatus = 1)
@@ -118,10 +118,10 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 				if is_submittable_doctype(doctype_name):
 					filters["docstatus"] = 1
 				
-				# For send-only doctypes, exclude documents with sync_status='Synced'
-				if is_send_only_doctype(doctype_name, settings):
+				# Exclude documents with sync_status set (Synced or Fetched) to avoid duplicates
+				if should_sync_doctype(doctype_name, settings, direction="send"):
 					if frappe.db.has_column(doctype_name, 'sync_status'):
-						filters["sync_status"] = ["!=", "Synced"]
+						filters["sync_status"] = ["in", ["", None]]
 				
 				# Add company filter if specified in settings
 				company = getattr(settings, 'company', None)
@@ -196,9 +196,9 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 			if not (syncable.get('send', 0) or syncable.get('send', False)):
 				continue
 			
-			# Ensure sync_status field exists for send-only doctypes
-			from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
-			if is_send_only_doctype(doctype_name, settings):
+			# Ensure sync_status field exists for all syncable doctypes
+			from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, should_sync_doctype
+			if should_sync_doctype(doctype_name, settings, direction="send"):
 				ensure_sync_status_field_exists(doctype_name)
 			
 			# Get all documents of this doctype
@@ -207,10 +207,10 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 			if is_submittable_doctype(doctype_name):
 				filters["docstatus"] = 1
 			
-			# For send-only doctypes, exclude documents with sync_status='Synced'
-			if is_send_only_doctype(doctype_name, settings):
+			# Exclude documents with sync_status set (Synced or Fetched) to avoid duplicates
+			if should_sync_doctype(doctype_name, settings, direction="send"):
 				if frappe.db.has_column(doctype_name, 'sync_status'):
-					filters["sync_status"] = ["!=", "Synced"]
+					filters["sync_status"] = ["in", ["", None]]
 			
 			# Add company filter if specified in settings
 			company = getattr(settings, 'company', None)
