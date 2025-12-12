@@ -173,6 +173,91 @@ def should_sync_doctype(doctype: str, settings, direction: str = "send") -> bool
 	return False
 
 
+def is_send_only_doctype(doctype: str, settings) -> bool:
+	"""
+	Check if a doctype is configured to only send to remote (send=1, fetch=0)
+	
+	Args:
+		doctype: Document type to check
+		settings: Havano Sync Settings
+		
+	Returns:
+		True if doctype is send-only, False otherwise
+	"""
+	syncable_doctypes = get_syncable_doctypes(settings)
+	
+	for syncable in syncable_doctypes:
+		syncable_doctype = syncable.doctypes
+		# Remove -Local suffix if present
+		if syncable_doctype and syncable_doctype.endswith("-Local"):
+			syncable_doctype = syncable_doctype[:-6]
+		
+		if syncable_doctype == doctype:
+			send = cint(syncable.get('send', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'send', 0))
+			fetch = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+			# Return True only if send is enabled AND fetch is disabled
+			return send == 1 and fetch == 0
+	return False
+
+
+def ensure_sync_status_field_exists(doctype: str) -> bool:
+	"""
+	Ensure sync_status field exists on local doctype for send-only doctypes
+	Creates the field if it doesn't exist
+	
+	Args:
+		doctype: Document type
+		
+	Returns:
+		True if field exists or was created, False otherwise
+	"""
+	try:
+		# Check if field already exists
+		if frappe.db.has_column(doctype, 'sync_status'):
+			return True
+		
+		# Get the doctype meta
+		doctype_doc = frappe.get_doc("DocType", doctype)
+		
+		# Check if sync_status field already exists in fields
+		field_exists = any(f.fieldname == 'sync_status' for f in doctype_doc.fields)
+		if field_exists:
+			return True
+		
+		# Find the last field index
+		max_idx = 0
+		for field in doctype_doc.fields:
+			idx = field.idx or 0
+			if isinstance(idx, (int, float)):
+				max_idx = max(max_idx, int(idx))
+		
+		# Add sync_status field
+		doctype_doc.append('fields', {
+			"fieldname": "sync_status",
+			"fieldtype": "Select",
+			"label": "Sync Status",
+			"options": "\nPending\nSynced\nFailed",
+			"default": "Pending",
+			"read_only": 0,
+			"no_copy": 1,
+			"idx": max_idx + 1
+		})
+		
+		# Save the doctype
+		doctype_doc.save(ignore_permissions=True)
+		frappe.db.commit()
+		
+		frappe.logger().info(f"Added sync_status field to {doctype}")
+		return True
+		
+	except Exception as e:
+		frappe.log_error(
+			title=f"Failed to add sync_status field to {doctype}",
+			message=f"Error: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return False
+
+
 def check_internet_connection(settings) -> bool:
 	"""
 	Check if internet connection is available by testing connection to remote server

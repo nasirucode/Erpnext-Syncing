@@ -710,6 +710,23 @@ def sync_document_to_remote(
 				"name": name
 			}
 		
+		# Check sync_status for send-only doctypes (skip if already synced)
+		if settings:
+			from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
+			if is_send_only_doctype(doctype, settings):
+				# Ensure field exists
+				ensure_sync_status_field_exists(doctype)
+				# Check if already synced
+				if frappe.db.has_column(doctype, 'sync_status'):
+					sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+					if sync_status == 'Synced':
+						return {
+							"status": "skipped",
+							"message": f"Document {doctype} {name} already synced (sync_status='Synced')",
+							"doctype": doctype,
+							"name": name
+						}
+		
 		# Get decrypted API secret if not provided
 		if not api_secret and settings:
 			api_secret = get_decrypted_api_secret(settings)
@@ -2106,6 +2123,24 @@ def sync_document_to_remote(
 					f"[SYNC] Failed to queue remote rename for {doctype}",
 					f"[SYNC] Could not queue remote rename for {doctype}: {str(rename_queue_error)}"
 				)
+		
+		# Update sync_status to "Synced" for send-only doctypes after successful sync
+		try:
+			from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
+			if settings and is_send_only_doctype(doctype, settings):
+				# Ensure field exists
+				ensure_sync_status_field_exists(doctype)
+				# Update sync_status to "Synced"
+				if frappe.db.has_column(doctype, 'sync_status'):
+					frappe.db.set_value(doctype, actual_name, 'sync_status', 'Synced')
+					frappe.db.commit()
+					frappe.logger().info(f"Updated sync_status to 'Synced' for {doctype} {actual_name}")
+		except Exception as sync_status_error:
+			# Log but don't fail the sync
+			frappe.log_error(
+				f"Failed to update sync_status for {doctype} {actual_name}",
+				f"Error updating sync_status: {str(sync_status_error)}"
+			)
 		
 		return {
 			"status": "success",

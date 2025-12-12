@@ -77,6 +77,15 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 		if not should_auto_sync and not is_enabled_for_send:
 			return
 		
+		# Check sync_status for send-only doctypes (skip if already synced)
+		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
+		if is_send_only_doctype(doctype, settings):
+			ensure_sync_status_field_exists(doctype)
+			if frappe.db.has_column(doctype, 'sync_status'):
+				sync_status = frappe.db.get_value(doctype, doc.name, 'sync_status')
+				if sync_status == 'Synced':
+					return  # Skip if already synced
+		
 		# For all syncable and compulsory doctypes, ensure sync fields exist locally and set them
 		# This must be done before syncing
 		if should_auto_sync or is_enabled_for_send:
@@ -997,6 +1006,15 @@ def _process_sync_on_submit(doctype: str, document_name: str):
 		# Auto-sync doctypes that should always sync (compulsory doctypes)
 		auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
 		
+		# Check sync_status for send-only doctypes (skip if already synced)
+		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
+		if is_send_only_doctype(doctype, settings):
+			ensure_sync_status_field_exists(doctype)
+			if frappe.db.has_column(doctype, 'sync_status'):
+				sync_status = frappe.db.get_value(doctype, document_name, 'sync_status')
+				if sync_status == 'Synced':
+					return  # Skip if already synced
+		
 		# CRITICAL: For Sales Invoice, Payment Entry, and Quotation with naming series configured,
 		# ALWAYS skip this function - the rename function will handle syncing
 		# This prevents double-queuing and ensures sync uses the renamed name
@@ -1267,6 +1285,15 @@ def _process_sync_on_update(doctype: str, document_name: str):
 		# Only sync if it's in auto-sync doctypes OR if it's enabled for sending
 		if not should_auto_sync and not is_enabled_for_send:
 			return
+		
+		# Check sync_status for send-only doctypes (skip if already synced)
+		from havano_sync.havano_sync.tasks.utils import is_send_only_doctype, ensure_sync_status_field_exists
+		if is_send_only_doctype(doctype, settings):
+			ensure_sync_status_field_exists(doctype)
+			if frappe.db.has_column(doctype, 'sync_status'):
+				sync_status = frappe.db.get_value(doctype, document_name, 'sync_status')
+				if sync_status == 'Synced':
+					return  # Skip if already synced
 		
 		# Get document to check company and prepare for sync
 		try:
