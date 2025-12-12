@@ -219,8 +219,11 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 				doctype_doc = frappe.get_doc("DocType", doctype)
 				for field in doctype_doc.fields:
 					if field.fieldname == 'sync_status':
-						if field.options != "\nSynced\nFetched":
-							field.options = "\nSynced\nFetched"
+						if field.options != "\nPending\nSynced\nFetched":
+							field.options = "\nPending\nSynced\nFetched"
+							# Update default if not set
+							if not field.default:
+								field.default = "Pending"
 							doctype_doc.save(ignore_permissions=True)
 							frappe.db.commit()
 							frappe.logger().info(f"Updated sync_status field options for {doctype}")
@@ -244,13 +247,13 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 			if isinstance(idx, (int, float)):
 				max_idx = max(max_idx, int(idx))
 		
-		# Add sync_status field with Synced and Fetched options
+		# Add sync_status field with Pending, Synced, and Fetched options
 		doctype_doc.append('fields', {
 			"fieldname": "sync_status",
 			"fieldtype": "Select",
 			"label": "Sync Status",
-			"options": "\nSynced\nFetched",
-			"default": "",
+			"options": "\nPending\nSynced\nFetched",
+			"default": "Pending",
 			"read_only": 0,
 			"no_copy": 1,
 			"idx": max_idx + 1
@@ -274,18 +277,20 @@ def ensure_sync_status_field_exists(doctype: str) -> bool:
 def has_sync_status(doctype: str, name: str) -> bool:
 	"""
 	Check if document has sync_status set (Synced or Fetched)
+	Documents with "Pending" or empty status should be synced
 	
 	Args:
 		doctype: Document type
 		name: Document name
 		
 	Returns:
-		True if sync_status is set, False otherwise
+		True if sync_status is Synced or Fetched, False otherwise (Pending or empty should sync)
 	"""
 	try:
 		if not frappe.db.has_column(doctype, 'sync_status'):
 			return False
 		sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+		# Only skip if already synced or fetched
 		return sync_status in ('Synced', 'Fetched')
 	except Exception:
 		return False

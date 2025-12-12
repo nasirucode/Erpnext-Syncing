@@ -719,7 +719,8 @@ def sync_document_to_remote(
 	api_secret: str = None,
 	force_create: bool = False,
 	sync_method: str = "Auto",
-	settings: Any = None
+	settings: Any = None,
+	skip_naming_series_check: bool = False
 ) -> Dict[str, Any]:
 	"""
 	Sync a document to the remote instance
@@ -778,10 +779,11 @@ def sync_document_to_remote(
 		# Handle case where document might have been renamed with -Local suffix (for non-Sales Invoice/Payment Entry)
 		# For Sales Invoice and Payment Entry with naming series, ensure we use the renamed name
 		actual_name = name
-		if doctype in ("Sales Invoice", "Payment Entry"):
+		if doctype in ("Sales Invoice", "Payment Entry") and not skip_naming_series_check:
 			# For Sales Invoice and Payment Entry, check if naming series is configured
 			# If so, the document should have been renamed with the naming series
 			# We should only sync if the document has been renamed (name matches naming series pattern)
+			# Skip this check when syncing old documents (skip_naming_series_check=True)
 			if settings:
 				naming_series_to_check = None
 				if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:

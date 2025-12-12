@@ -59,8 +59,8 @@ def execute():
 						"fieldname": "sync_status",
 						"fieldtype": "Select",
 						"label": "Sync Status",
-						"options": "\nSynced\nFetched",
-						"default": "",
+						"options": "\nPending\nSynced\nFetched",
+						"default": "Pending",
 						"read_only": 0,
 						"no_copy": 1,
 						"idx": max_idx + 1
@@ -68,9 +68,12 @@ def execute():
 				else:
 					# Update existing field if options are different
 					for field in doctype_doc.fields:
-						if field.fieldname == 'sync_status' and field.options != "\nSynced\nFetched":
-							field.options = "\nSynced\nFetched"
-							fields_to_update.append('sync_status')
+						if field.fieldname == 'sync_status':
+							if field.options != "\nPending\nSynced\nFetched":
+								field.options = "\nPending\nSynced\nFetched"
+								if not field.default:
+									field.default = "Pending"
+								fields_to_update.append('sync_status')
 				
 				# Check and add sync_reference field
 				if 'sync_reference' not in existing_fields:
@@ -131,6 +134,39 @@ def execute():
 					message=f"Error adding sync fields to {doctype_name}: {str(e)}\n{frappe.get_traceback()}"
 				)
 				skipped_count += 1
+		
+		# Set empty or NULL sync_status values to "Pending" (default value)
+		try:
+			updated_count = 0
+			for doctype_name in sorted(doctype_names):
+				try:
+					if frappe.db.exists("DocType", doctype_name) and frappe.db.has_column(doctype_name, 'sync_status'):
+						# Count documents with empty or NULL sync_status
+						count = frappe.db.sql(f"""
+							SELECT COUNT(*) FROM `tab{doctype_name}`
+							WHERE sync_status IS NULL OR sync_status = ''
+						""")
+						empty_count = count[0][0] if count and count[0] else 0
+						
+						if empty_count > 0:
+							# Set empty/NULL values to "Pending"
+							frappe.db.sql(f"""
+								UPDATE `tab{doctype_name}`
+								SET sync_status = 'Pending'
+								WHERE sync_status IS NULL OR sync_status = ''
+							""")
+							updated_count += empty_count
+				except Exception:
+					pass
+			
+			if updated_count > 0:
+				frappe.db.commit()
+				frappe.logger().info(f"Set {updated_count} empty sync_status values to 'Pending'")
+		except Exception as e:
+			frappe.log_error(
+				title="Failed to set default sync_status values",
+				message=f"Error setting default sync_status values: {str(e)}"
+			)
 		
 		frappe.logger().info(
 			f"Sync fields patch completed: {created_count} fields created, "

@@ -118,11 +118,6 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 				if is_submittable_doctype(doctype_name):
 					filters["docstatus"] = 1
 				
-				# Exclude documents with sync_status set (Synced or Fetched) to avoid duplicates
-				if should_sync_doctype(doctype_name, settings, direction="send"):
-					if frappe.db.has_column(doctype_name, 'sync_status'):
-						filters["sync_status"] = ["in", ["", None]]
-				
 				# Add company filter if specified in settings
 				company = getattr(settings, 'company', None)
 				if company:
@@ -145,12 +140,52 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 						# For Company doctype, only sync the specified company
 						filters["name"] = company
 				
-				docs = frappe.get_all(
-					doctype_name,
-					filters=filters,
-					fields=["name"],
-					limit=1000
-				)
+				# Get documents with sync_status = 'Pending' or empty/NULL using SQL
+				if should_sync_doctype(doctype_name, settings, direction="send") and frappe.db.has_column(doctype_name, 'sync_status'):
+					# Use SQL to directly query documents with Pending or empty sync_status
+					base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending')"]
+					
+					# For submittable doctypes, only sync submitted documents
+					if is_submittable_doctype(doctype_name):
+						base_conditions.append("docstatus = 1")
+					
+					# Add company filter if specified and column exists
+					params = []
+					if company:
+						company_doctypes = {
+							'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
+							'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
+							'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
+							'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
+							'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
+							'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
+							'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
+							'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
+							'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
+							'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
+						}
+						if doctype_name in company_doctypes and frappe.db.has_column(doctype_name, 'company'):
+							base_conditions.append("company = %s")
+							params.append(company)
+						elif doctype_name == 'Company':
+							base_conditions.append("name = %s")
+							params.append(company)
+					
+					where_clause = " AND ".join(base_conditions)
+					query = f"SELECT name FROM `tab{doctype_name}` WHERE {where_clause} LIMIT 1000"
+					
+					if params:
+						docs = frappe.db.sql(query, tuple(params), as_dict=True)
+					else:
+						docs = frappe.db.sql(query, as_dict=True)
+				else:
+					# Fallback to frappe.get_all if sync_status column doesn't exist
+					docs = frappe.get_all(
+						doctype_name,
+						filters=filters,
+						fields=["name"],
+						limit=1000
+					)
 				
 				for doc_info in docs:
 					try:
@@ -201,61 +236,128 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 			if should_sync_doctype(doctype_name, settings, direction="send"):
 				ensure_sync_status_field_exists(doctype_name)
 			
-			# Get all documents of this doctype
+			# Get documents with sync_status = 'Pending' or empty/NULL using SQL for accuracy
 			# For submittable doctypes, only sync submitted documents (docstatus = 1)
-			filters = {}
-			if is_submittable_doctype(doctype_name):
-				filters["docstatus"] = 1
-			
-			# Exclude documents with sync_status set (Synced or Fetched) to avoid duplicates
-			if should_sync_doctype(doctype_name, settings, direction="send"):
-				if frappe.db.has_column(doctype_name, 'sync_status'):
-					filters["sync_status"] = ["in", ["", None]]
-			
-			# Add company filter if specified in settings
 			company = getattr(settings, 'company', None)
-			if company:
-				# For doctypes that have company field, filter by company
-				company_doctypes = {
-					'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
-					'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
-					'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
-					'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
-					'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
-					'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
-					'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
-					'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
-					'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
-					'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
-				}
-				if doctype_name in company_doctypes:
-					filters["company"] = company
-				elif doctype_name == 'Company':
-					# For Company doctype, only sync the specified company
-					filters["name"] = company
 			
-			docs = frappe.get_all(
-				doctype_name,
-				filters=filters,
-				fields=["name"],
-				limit=1000  # Limit to prevent timeout
-			)
+			# Build SQL query to get documents with Pending or empty sync_status
+			if should_sync_doctype(doctype_name, settings, direction="send") and frappe.db.has_column(doctype_name, 'sync_status'):
+				# Use SQL to directly query documents with Pending or empty sync_status
+				base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending')"]
+				
+				# For submittable doctypes, only sync submitted documents
+				if is_submittable_doctype(doctype_name):
+					base_conditions.append("docstatus = 1")
+				
+				# Add company filter if specified and column exists
+				params = []
+				if company:
+					company_doctypes = {
+						'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
+						'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
+						'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
+						'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
+						'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
+						'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
+						'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
+						'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
+						'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
+						'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
+					}
+					if doctype_name in company_doctypes and frappe.db.has_column(doctype_name, 'company'):
+						base_conditions.append("company = %s")
+						params.append(company)
+					elif doctype_name == 'Company':
+						base_conditions.append("name = %s")
+						params.append(company)
+				
+				where_clause = " AND ".join(base_conditions)
+				query = f"SELECT name FROM `tab{doctype_name}` WHERE {where_clause} LIMIT 1000"
+				
+				if params:
+					docs_result = frappe.db.sql(query, tuple(params), as_dict=True)
+				else:
+					docs_result = frappe.db.sql(query, as_dict=True)
+				docs = docs_result
+			else:
+				# Fallback to frappe.get_all if sync_status column doesn't exist
+				filters = {}
+				if is_submittable_doctype(doctype_name):
+					filters["docstatus"] = 1
+				
+				if company:
+					company_doctypes = {
+						'Account', 'Warehouse', 'Cost Center', 'Sales Invoice', 'Purchase Invoice',
+						'Sales Order', 'Purchase Order', 'Payment Entry', 'Journal Entry',
+						'Stock Entry', 'Delivery Note', 'Purchase Receipt', 'Quotation',
+						'Purchase Request', 'Material Request', 'Work Order', 'Job Card',
+						'Timesheet', 'Expense Claim', 'Leave Application', 'Salary Slip',
+						'Asset', 'Asset Movement', 'Landed Cost Voucher', 'Stock Reconciliation',
+						'Stock Ledger Entry', 'GL Entry', 'Budget', 'Budget Account',
+						'Project', 'Task', 'Issue', 'Opportunity', 'Lead', 'Customer',
+						'Supplier', 'Employee', 'Employee Advance', 'Employee Loan',
+						'Payroll Entry', 'Salary Structure', 'Salary Structure Assignment'
+					}
+					if doctype_name in company_doctypes and frappe.db.has_column(doctype_name, 'company'):
+						filters["company"] = company
+					elif doctype_name == 'Company':
+						filters["name"] = company
+				
+				docs = frappe.get_all(
+					doctype_name,
+					filters=filters,
+					fields=["name"],
+					limit=1000
+				)
 			
 			for doc_info in docs:
-				result = sync_document_to_remote(
-					doctype_name,
-					doc_info.name,
-					settings.remote_url,
-					settings.admin_api_key,
-					api_secret=None,  # Will be decrypted in function
-					sync_method="Cron",
-					settings=settings
-				)
-				
-				if result["status"] == "success":
-					results["success"].append(result)
-				else:
-					results["errors"].append(result)
+				try:
+					# Documents are already filtered to only include Pending or empty sync_status
+					result = sync_document_to_remote(
+						doctype_name,
+						doc_info.name,
+						settings.remote_url,
+						settings.admin_api_key,
+						api_secret=None,  # Will be decrypted in function
+						sync_method="Cron",
+						settings=settings,
+						skip_naming_series_check=True  # Skip naming series check for old documents
+					)
+					
+					if result["status"] == "success":
+						results["success"].append(result)
+					else:
+						# Log clear error message
+						error_msg = result.get("message", "Unknown error")
+						frappe.log_error(
+							title=f"Sync failed: {doctype_name} {doc_info.name}",
+							message=f"Document: {doctype_name} {doc_info.name}\n"
+									f"Error: {error_msg}\n"
+									f"Status: {result.get('status', 'unknown')}"
+						)
+						results["errors"].append({
+							"doctype": doctype_name,
+							"name": doc_info.name,
+							"error": error_msg,
+							"status": result.get("status", "error")
+						})
+				except Exception as e:
+					# Log clear error for exceptions
+					error_msg = str(e)
+					frappe.log_error(
+						title=f"Sync exception: {doctype_name} {doc_info.name}",
+						message=f"Document: {doctype_name} {doc_info.name}\n"
+								f"Exception: {error_msg}\n"
+								f"Traceback: {frappe.get_traceback()}"
+					)
+					results["errors"].append({
+						"doctype": doctype_name,
+						"name": doc_info.name,
+						"error": error_msg,
+						"status": "exception"
+					})
+					# Continue with next document
+					continue
 			
 			# After all sends for this doctype are complete, check if fetch is also enabled
 			# Only trigger fetch once per doctype, not after each document
@@ -479,14 +581,22 @@ def sync_single_document(doctype: str, name: str):
 def sync_cron_job():
 	"""
 	Cron job function to sync all pending documents
-	This is called via scheduler_events hook
+	Syncs all documents with sync_status = 'Pending' or empty/NULL
+	Skips failures and logs clear error messages
 	"""
 	try:
-		sync_all_pending_documents()
+		result = sync_all_pending_documents()
+		if result:
+			success_count = len(result.get("success", []))
+			error_count = len(result.get("errors", []))
+			if success_count > 0 or error_count > 0:
+				frappe.logger().info(
+					f"Sync cron job completed: {success_count} successful, {error_count} errors"
+				)
 	except Exception as e:
 		frappe.log_error(
-			"Cron Sync Job Failed",
-			frappe.get_traceback()
+			title="Sync Cron Job Failed",
+			message=f"Error in sync_cron_job: {str(e)}\n{frappe.get_traceback()}"
 		)
 
 
@@ -503,6 +613,79 @@ def process_queue_cron_job():
 		frappe.log_error(
 			"Process Queue Cron Job Failed",
 			frappe.get_traceback()
+		)
+
+
+def check_internet_and_sync_cron_job():
+	"""
+	Cron job to check internet connection and trigger sync when internet comes back
+	This runs more frequently (every 5 minutes) to detect when internet is restored
+	"""
+	try:
+		settings = get_sync_settings()
+		
+		# Check if settings are configured
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return
+		
+		# Check internet connection
+		has_internet = check_internet_connection(settings)
+		
+		if has_internet:
+			# Internet is available - check if we have pending documents to sync
+			# Get a count of pending documents
+			syncable_doctypes = get_syncable_doctypes(settings)
+			has_pending = False
+			
+			for syncable in syncable_doctypes:
+				doctype_name = syncable.doctypes
+				if doctype_name and doctype_name.endswith("-Local"):
+					doctype_name = doctype_name[:-6]
+				
+				send_enabled = cint(syncable.get('send', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'send', 0))
+				if not send_enabled:
+					continue
+				
+				if should_sync_doctype(doctype_name, settings, direction="send"):
+					if frappe.db.has_column(doctype_name, 'sync_status'):
+						# Count documents with Pending or empty/NULL sync_status
+						# Use SQL to handle NULL values correctly
+						base_query = f"""
+							SELECT COUNT(*) FROM `tab{doctype_name}`
+							WHERE (sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending')
+						"""
+						
+						# For submittable doctypes, only count submitted documents
+						if is_submittable_doctype(doctype_name):
+							query = base_query + " AND docstatus = 1"
+						else:
+							query = base_query
+						
+						count = frappe.db.sql(query)
+						doc_count = count[0][0] if count and count[0] else 0
+						
+						if doc_count > 0:
+							has_pending = True
+							break
+			
+			if has_pending:
+				# Internet is back and we have pending documents - trigger sync
+				frappe.logger().info("Internet connection detected. Triggering sync for pending documents.")
+				frappe.enqueue(
+					sync_all_pending_documents,
+					queue="long",
+					timeout=3600,
+					is_async=True,
+					job_name="sync_on_internet_restored"
+				)
+	except Exception as e:
+		frappe.log_error(
+			title="Internet Check and Sync Cron Job Failed",
+			message=f"Error in check_internet_and_sync_cron_job: {str(e)}\n{frappe.get_traceback()}"
 		)
 
 

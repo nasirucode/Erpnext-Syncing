@@ -415,47 +415,85 @@ def run_migration():
 	try:
 		import subprocess
 		import os
+		import shutil
 		import frappe
+		
+		# Check if bench command exists
+		bench_cmd = shutil.which("bench")
+		if not bench_cmd:
+			# Try to find bench in common locations or use python -m frappe
+			# Get the bench path (parent of sites directory)
+			sites_path = frappe.get_site_path()
+			bench_path = os.path.dirname(os.path.dirname(sites_path))
+			
+			# Try to use bench from the bench directory
+			bench_cmd = os.path.join(bench_path, "env", "bin", "bench")
+			if not os.path.exists(bench_cmd):
+				# Try using frappe command directly
+				bench_cmd = None
+		
+		# Get site name
+		site_name = frappe.local.site
 		
 		# Get the bench path (parent of sites directory)
 		sites_path = frappe.get_site_path()
 		bench_path = os.path.dirname(os.path.dirname(sites_path))
 		
-		# Get site name
-		site_name = frappe.local.site
-		
-		# Run bench migrate command
-		# Use bench --site <site> migrate
-		cmd = ["bench", "--site", site_name, "migrate"]
-		
-		# Change to bench directory
-		os.chdir(bench_path)
-		
-		# Run the command
-		result = subprocess.run(
-			cmd,
-			capture_output=True,
-			text=True,
-			timeout=300  # 5 minute timeout
-		)
-		
-		if result.returncode == 0:
-			return {
-				"status": "success",
-				"message": f"Migration completed successfully for site {site_name}",
-				"output": result.stdout
-			}
-		else:
+		# Ensure bench_path exists
+		if not os.path.exists(bench_path):
 			return {
 				"status": "error",
-				"message": f"Migration failed with return code {result.returncode}",
-				"error": result.stderr,
-				"output": result.stdout
+				"message": f"Bench path not found: {bench_path}"
 			}
+		
+		# Build command
+		if bench_cmd and os.path.exists(bench_cmd):
+			cmd = [bench_cmd, "--site", site_name, "migrate"]
+		else:
+			# Fallback: use frappe command directly
+			# This requires frappe to be in the Python path
+			cmd = ["python", "-m", "frappe", "migrate", "--site", site_name]
+		
+		# Change to bench directory
+		original_cwd = os.getcwd()
+		try:
+			os.chdir(bench_path)
+			
+			# Run the command
+			result = subprocess.run(
+				cmd,
+				capture_output=True,
+				text=True,
+				timeout=300,  # 5 minute timeout
+				env=os.environ.copy()  # Use current environment
+			)
+			
+			if result.returncode == 0:
+				return {
+					"status": "success",
+					"message": f"Migration completed successfully for site {site_name}",
+					"output": result.stdout
+				}
+			else:
+				return {
+					"status": "error",
+					"message": f"Migration failed with return code {result.returncode}",
+					"error": result.stderr,
+					"output": result.stdout
+				}
+		finally:
+			# Restore original directory
+			os.chdir(original_cwd)
+		
 	except subprocess.TimeoutExpired:
 		return {
 			"status": "error",
 			"message": "Migration timed out after 5 minutes"
+		}
+	except FileNotFoundError as e:
+		return {
+			"status": "error",
+			"message": f"Command not found: {str(e)}. Please ensure 'bench' command is available in PATH or install Frappe Bench."
 		}
 	except Exception as e:
 		frappe.log_error(
