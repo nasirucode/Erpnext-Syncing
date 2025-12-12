@@ -456,7 +456,7 @@ def sync_linked_documents(
 				'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
 				'Email Queue', 'Email Queue Recipient', 'Notification Log',
 				'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
-				'Route History', 'Webform', 'Access Log'
+				'Route History', 'Webform', 'Access Log', 'Portal Settings'
 			}
 			
 			# Skip exempted doctypes
@@ -615,7 +615,7 @@ def sync_linked_documents(
 								'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
 								'Email Queue', 'Email Queue Recipient', 'Notification Log',
 								'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
-								'Route History', 'Webform', 'Access Log'
+								'Route History', 'Webform', 'Access Log', 'Portal Settings'
 							}
 							
 							# Skip exempted doctypes
@@ -733,7 +733,7 @@ def sync_document_to_remote(
 			'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
 			'Email Queue', 'Email Queue Recipient', 'Notification Log',
 			'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
-			'Route History', 'Webform', 'Access Log'
+			'Route History', 'Webform', 'Access Log', 'Portal Settings'
 		}
 		
 		if doctype in exempted_doctypes:

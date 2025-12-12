@@ -35,7 +35,9 @@ def sync_document_on_create(doc, method: Optional[str] = None):
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
-			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings"
+			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings",
+			"GL Entry", "Stock Ledger Entry", "Payment Ledger Entry", "Repost Payment Ledger",
+			"Route History", "Webform", "Access Log", "Portal Settings"
 		]
 		
 		if doctype in system_doctypes:
@@ -225,7 +227,9 @@ def sync_document_on_submit(doc, method: Optional[str] = None):
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
-			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings"
+			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings",
+			"GL Entry", "Stock Ledger Entry", "Payment Ledger Entry", "Repost Payment Ledger",
+			"Route History", "Webform", "Access Log", "Portal Settings"
 		]
 		
 		if doctype in system_doctypes:
@@ -319,7 +323,9 @@ def sync_document_on_update(doc, method: Optional[str] = None):
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
-			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings"
+			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings",
+			"GL Entry", "Stock Ledger Entry", "Payment Ledger Entry", "Repost Payment Ledger",
+			"Route History", "Webform", "Access Log", "Portal Settings"
 		]
 		
 		if doctype in system_doctypes:
@@ -381,7 +387,9 @@ def add_local_suffix_after_insert(doc, method: Optional[str] = None):
 			"Error Log", "Activity Log", "Comment", "Version", "Communication",
 			"Email Queue", "Email Queue Recipient", "Notification Log",
 			"Scheduled Job Log", "Scheduled Job Type",
-			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings"
+			"Havano Sync Log", "Havano Sync Queue", "Havano Sync Settings",
+			"GL Entry", "Stock Ledger Entry", "Payment Ledger Entry", "Repost Payment Ledger",
+			"Route History", "Webform", "Access Log", "Portal Settings", "User", "DocType"
 		]
 		
 		if doctype in system_doctypes:
