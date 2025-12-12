@@ -184,10 +184,10 @@ scheduler_events = {
 
 # Overriding Methods
 # ------------------------------
-#
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "havano_sync.event.get_events"
-# }
+
+override_whitelisted_methods = {
+	"erpnext.accounts.party.get_payment_terms_template": "havano_sync.havano_sync.utils.party.get_payment_terms_template"
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
