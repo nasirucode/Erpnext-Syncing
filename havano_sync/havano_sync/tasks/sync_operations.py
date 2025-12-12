@@ -450,6 +450,19 @@ def sync_linked_documents(
 			if not link_value or link_value in (None, "", "None", "null"):
 				continue
 			
+			# Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+			exempted_doctypes = {
+				'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+				'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+				'Email Queue', 'Email Queue Recipient', 'Notification Log',
+				'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+				'Route History', 'Webform', 'Access Log'
+			}
+			
+			# Skip exempted doctypes
+			if link_doctype in exempted_doctypes:
+				continue
+			
 			# Sync linked documents if they exist and are either enabled OR are critical dependencies
 			# Critical dependencies include: Account, Cost Center, Warehouse, Customer, Supplier, etc.
 			critical_doctypes = {
@@ -596,6 +609,19 @@ def sync_linked_documents(
 							if not link_value or link_value in (None, "", "None", "null"):
 								continue
 							
+							# Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+							exempted_doctypes = {
+								'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+								'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+								'Email Queue', 'Email Queue Recipient', 'Notification Log',
+								'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+								'Route History', 'Webform', 'Access Log'
+							}
+							
+							# Skip exempted doctypes
+							if link_doctype in exempted_doctypes:
+								continue
+							
 							# Sync linked documents if they exist and are either enabled OR are critical dependencies
 							critical_doctypes = {
 								'Account', 'Cost Center', 'Warehouse', 'Company', 'Currency', 'UOM', 'Item Group',
@@ -701,11 +727,19 @@ def sync_document_to_remote(
 	start_time = time.time()
 	
 	try:
-		# Exempt User doctype from syncing
-		if doctype == "User":
+		# Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+		exempted_doctypes = {
+			'User', 'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+			'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+			'Email Queue', 'Email Queue Recipient', 'Notification Log',
+			'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+			'Route History', 'Webform', 'Access Log'
+		}
+		
+		if doctype in exempted_doctypes:
 			return {
 				"status": "skipped",
-				"message": "User doctype is exempted from syncing",
+				"message": f"{doctype} doctype is exempted from syncing",
 				"doctype": doctype,
 				"name": name
 			}

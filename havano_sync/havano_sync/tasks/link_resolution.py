@@ -305,6 +305,19 @@ def sync_linked_documents(
             if not link_value or link_value in (None, "", "None", "null"):
                 continue
             
+            # Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+            exempted_doctypes = {
+                'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+                'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+                'Email Queue', 'Email Queue Recipient', 'Notification Log',
+                'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+                'Route History', 'Webform', 'Access Log'
+            }
+            
+            # Skip exempted doctypes
+            if link_doctype in exempted_doctypes:
+                continue
+            
             # Sync linked documents if they exist and are either enabled OR are critical dependencies
             # Critical dependencies include: Account, Cost Center, Warehouse, Customer, Supplier, etc.
             critical_doctypes = {
@@ -437,6 +450,19 @@ def sync_linked_documents(
                             
                             # Skip None, null, empty string, or the string "None"
                             if not link_value or link_value in (None, "", "None", "null"):
+                                continue
+                            
+                            # Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+                            exempted_doctypes = {
+                                'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+                                'User', 'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+                                'Email Queue', 'Email Queue Recipient', 'Notification Log',
+                                'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+                                'Route History', 'Webform', 'Access Log'
+                            }
+                            
+                            # Skip exempted doctypes
+                            if link_doctype in exempted_doctypes:
                                 continue
                             
                             # Sync linked documents if they exist and are either enabled OR are critical dependencies
