@@ -1077,6 +1077,9 @@ def _process_sync_on_update(doctype: str, document_name: str):
 	This function runs ALL checks and operations in background to avoid blocking update
 	"""
 	try:
+		# Import required functions at the start
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
+		
 		frappe.logger().info(f"[SYNC_ON_UPDATE] Processing {doctype} {document_name} in background")
 		
 		# Get settings in background
@@ -1102,7 +1105,6 @@ def _process_sync_on_update(doctype: str, document_name: str):
 			return
 		
 		# Check sync_status - skip if already synced or fetched (avoid duplicates)
-		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
 		if should_sync_doctype(doctype, settings, direction="send"):
 			ensure_sync_status_field_exists(doctype)
 			if has_sync_status(doctype, document_name):

@@ -370,7 +370,7 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 					frappe.enqueue(
 						"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
 						doctype=doctype_name,
-						queue="default",
+						queue="short",
 						timeout=300,
 						is_async=True
 					)
@@ -677,7 +677,7 @@ def check_internet_and_sync_cron_job():
 				frappe.logger().info("Internet connection detected. Triggering sync for pending documents.")
 				frappe.enqueue(
 					sync_all_pending_documents,
-					queue="long",
+					queue="short",
 					timeout=3600,
 					is_async=True,
 					job_name="sync_on_internet_restored"
