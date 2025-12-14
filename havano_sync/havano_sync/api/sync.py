@@ -402,6 +402,34 @@ def trigger_fetch_item_prices_and_exchange_rates():
 	"""
 	return fetch_item_prices_and_exchange_rates()
 
+@frappe.whitelist()
+def trigger_fetch_items_and_item_prices():
+	"""
+	API endpoint to manually trigger fetch of Items and Item Prices from remote
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_items_and_item_prices
+	"""
+	from havano_sync.havano_sync.tasks.sync import fetch_items_and_item_prices_cron_job
+	
+	try:
+		# Call the cron job function directly
+		fetch_items_and_item_prices_cron_job()
+		
+		return {
+			"status": "success",
+			"message": "Items and Item Prices fetch has been queued. They will be fetched in the background."
+		}
+	except Exception as e:
+		frappe.log_error(
+			title="Manual Fetch Items and Item Prices Failed",
+			message=f"Error triggering fetch: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to trigger fetch: {str(e)}"
+		}
+
 
 @frappe.whitelist()
 def run_migration():
