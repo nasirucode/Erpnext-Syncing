@@ -761,6 +761,68 @@ def fetch_item_prices_and_exchange_rates():
 		}
 
 
+def fetch_items_and_item_prices_cron_job():
+	"""
+	Cron job to fetch Item and Item Price from remote every 2 minutes
+	This ensures Items and Item Prices are always up-to-date
+	"""
+	try:
+		settings = get_sync_settings()
+		
+		# Check if settings are configured
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return
+		
+		# Check if Item and Item Price are enabled for fetching
+		syncable_doctypes = get_syncable_doctypes(settings)
+		item_fetch_enabled = False
+		item_price_fetch_enabled = False
+		
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+			
+			if doctype_name == "Item" and fetch_enabled:
+				item_fetch_enabled = True
+			elif doctype_name == "Item Price" and fetch_enabled:
+				item_price_fetch_enabled = True
+		
+		# Fetch Items and Item Prices in parallel for faster execution
+		from havano_sync.havano_sync.tasks.fetch_operations import fetch_all_documents_from_remote
+		
+		if item_fetch_enabled:
+			frappe.enqueue(
+				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+				doctype="Item",
+				queue="default",  # Use default queue for faster processing
+				timeout=300,
+				is_async=True,
+				job_name="fetch_items_cron"
+			)
+		
+		if item_price_fetch_enabled:
+			frappe.enqueue(
+				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+				doctype="Item Price",
+				queue="default",  # Use default queue for faster processing
+				timeout=300,
+				is_async=True,
+				job_name="fetch_item_prices_cron"
+			)
+	except Exception as e:
+		frappe.log_error(
+			title="Fetch Items and Item Prices Cron Job Failed",
+			message=f"Error in fetch_items_and_item_prices_cron_job: {str(e)}\n{frappe.get_traceback()}"
+		)
+
+
 def trigger_fetch_on_login(login_manager=None):
 	"""
 	Trigger fetch cron job when user logs in
@@ -799,11 +861,16 @@ def trigger_fetch_on_login(login_manager=None):
 			if not fetch_enabled:
 				continue
 			
-			# Enqueue each doctype fetch in parallel (short queue for faster processing)
+			# For Item and Item Price, use default queue for faster processing
+			# For other doctypes, use short queue
+			immediate_fetch_doctypes = {"Item", "Item Price"}
+			queue_name = "default" if doctype_name in immediate_fetch_doctypes else "short"
+			
+			# Enqueue each doctype fetch in parallel
 			frappe.enqueue(
 				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
 				doctype=doctype_name,
-				queue="short",  # Use short queue for faster processing
+				queue=queue_name,  # Use default queue for Item/Item Price, short for others
 				timeout=300,  # 5 minutes timeout per doctype
 				is_async=True,
 				job_name=f"fetch_on_login_{doctype_name}"

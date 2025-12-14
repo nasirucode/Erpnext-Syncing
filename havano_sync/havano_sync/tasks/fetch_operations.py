@@ -733,13 +733,35 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 		# Get syncable doctypes with fetch enabled
 		syncable_doctypes = get_syncable_doctypes(settings)
 		
+		# Prioritize Item and Item Price for faster fetching
+		priority_doctypes = {"Item", "Item Price"}
+		priority_list = []
+		normal_list = []
+		
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			# If specific doctype requested, only process that doctype
+			if doctype and doctype_name != doctype:
+				continue
+			
+			if doctype_name in priority_doctypes:
+				priority_list.append(syncable)
+			else:
+				normal_list.append(syncable)
+		
+		# Process priority doctypes first, then others
+		sorted_syncable = priority_list + normal_list
+		
 		results = {
 			"success": [],
 			"skipped": [],
 			"errors": []
 		}
 		
-		for syncable in syncable_doctypes:
+		for syncable in sorted_syncable:
 			doctype_name = syncable.doctypes
 			
 			# Remove -Local suffix if present (doctype names should never have -Local suffix)
@@ -765,10 +787,6 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 					"doctype": doctype_name,
 					"message": f"Doctype {doctype_name} can only sync from local to remote, not from remote to local"
 				})
-				continue
-			
-			# If specific doctype requested, skip others
-			if doctype and doctype_name != doctype:
 				continue
 			
 			# Check if fetch is enabled

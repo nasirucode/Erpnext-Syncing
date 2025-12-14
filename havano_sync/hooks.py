@@ -173,6 +173,9 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"havano_sync.havano_sync.tasks.sync_operations.rename_remote_sales_invoices_by_sync_reference",
 			"havano_sync.havano_sync.tasks.sync.check_internet_and_sync_cron_job"
+		],
+		"*/2 * * * *": [
+			"havano_sync.havano_sync.tasks.sync.fetch_items_and_item_prices_cron_job"
 		]
 	}
 }
