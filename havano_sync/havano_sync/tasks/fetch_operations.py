@@ -1082,16 +1082,22 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 				if doctype_name == "Item Price":
 					for remote_doc_info in remote_docs:
 						doc_name = remote_doc_info.get('name')
+
+
 						if not doc_name:
+
+
 							continue
-						
-						# Get the full document to access item_code, price_list, and rate
+
+					
+					
+						# Get the full document to access item_code, price_list, and price_list_rate
 						try:
 							remote_doc = api_client.get_document(doctype_name, doc_name)
 							remote_docs_cache[doc_name] = remote_doc  # Cache for later use
 							item_code = remote_doc.get('item_code')
 							price_list = remote_doc.get('price_list')
-							rate = remote_doc.get('rate')
+							price_list_rate = remote_doc.get('price_list_rate')
 							
 							if not item_code:
 								continue
@@ -1104,7 +1110,7 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 							item_price_by_item[item_code].append({
 								'item_code': item_code,
 								'price_list': price_list,
-								'rate': rate
+								'price_list_rate': price_list_rate
 							})
 						except Exception as e:
 							frappe.logger().warning(f"Could not get data for remote Item Price {doc_name}: {str(e)}")
@@ -1184,67 +1190,33 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						else:
 							remote_doc = api_client.get_document(doctype_name, doc_name)
 						
-						# For Item Price, check if document exists by item_code, price_list, and rate
+						# For Item Price, check if document exists by item_code and price_list
+						# If found, update price_list_rate to match remote
 						if doctype_name == "Item Price":
 							remote_item_code = remote_doc.get('item_code')
 							remote_price_list = remote_doc.get('price_list')
-							remote_rate = remote_doc.get('rate')
+							remote_price_list_rate = remote_doc.get('price_list_rate')
 							
-							if remote_item_code and remote_price_list and remote_rate is not None:
-								# Check if local Item Price exists with same item_code, price_list, and rate
+							if remote_item_code and remote_price_list:
+								# Check if local Item Price exists with same item_code and price_list
 								existing_item_price = frappe.db.get_value(
 									doctype_name,
 									{
 										"item_code": remote_item_code,
-										"price_list": remote_price_list,
-										"rate": remote_rate
+										"price_list": remote_price_list
 									},
 									"name"
 								)
 								
 								if existing_item_price:
-									# Document exists - update it instead of skipping
+									# Document exists - update price_list_rate to match remote
 									try:
-										frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}, rate={remote_rate}. Updating.")
+										frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}. Updating price_list_rate to {remote_price_list_rate}.")
 										local_doc = frappe.get_doc(doctype_name, existing_item_price)
-										meta = frappe.get_meta(doctype_name)
 										
-										# Update document fields with remote data
-										updated_fields = []
-										for fieldname, value in doc_data.items():
-											if fieldname in metadata_fields:
-												continue
-											
-											field = meta.get_field(fieldname)
-											if field and (field.read_only or field.fieldtype in ['Section Break', 'Column Break', 'Tab Break']):
-												continue
-											
-											if field and field.fieldtype == 'Table':
-												continue
-											
-											if hasattr(local_doc, fieldname):
-												try:
-													old_value = getattr(local_doc, fieldname, None)
-													setattr(local_doc, fieldname, value)
-													if old_value != value:
-														updated_fields.append(fieldname)
-												except Exception:
-													pass
-										
-										# Handle child tables
-										for field in meta.fields:
-											if field.fieldtype == "Table" and field.fieldname in doc_data:
-												child_table_data = doc_data.get(field.fieldname, [])
-												if child_table_data:
-													local_doc.set(field.fieldname, [])
-													for child_row in child_table_data:
-														child_doc = local_doc.append(field.fieldname)
-														for child_fieldname, child_value in child_row.items():
-															if child_fieldname not in metadata_fields:
-																try:
-																	setattr(child_doc, child_fieldname, child_value)
-																except Exception:
-																	pass
+										# Update price_list_rate
+										old_rate = local_doc.price_list_rate
+										local_doc.price_list_rate = remote_price_list_rate
 										
 										# Update sync fields
 										local_doc.sync_type = "Remote"
@@ -1254,6 +1226,8 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 										# Save the updated document
 										local_doc.save(ignore_permissions=True)
 										frappe.db.commit()
+										
+										frappe.logger().info(f"[Item Price Update] Updated price_list_rate from {old_rate} to {remote_price_list_rate} for {doctype_name} {existing_item_price}")
 										
 										# Set sync_status to "Fetched"
 										try:
@@ -1272,13 +1246,13 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 										results["success"].append({
 											"doctype": doctype_name,
 											"name": existing_item_price,
-											"message": f"Document updated successfully (matched by item_code, price_list, rate)"
+											"message": f"Document updated successfully (matched by item_code, price_list). Updated price_list_rate from {old_rate} to {remote_price_list_rate}"
 										})
 										continue
 									except Exception as update_error:
 										frappe.log_error(
 											title=f"Failed to update {doctype_name} {existing_item_price}",
-											message=f"Error updating {doctype_name} {existing_item_price}: {str(update_error)}"
+											message=f"Error updating {doctype_name} {existing_item_price}: {str(update_error)}\n{frappe.get_traceback()}"
 										)
 										# If update fails, continue to create as new
 										frappe.logger().info(f"Update failed for {doctype_name} {existing_item_price}, will attempt to create as new")
@@ -1286,16 +1260,28 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						# For non-Item Price doctypes, check if document exists by name
 						if doctype_name != "Item Price":
 							try:
+
 								frappe.get_doc(doctype_name, doc_name)
+
 								results["skipped"].append({
-									"doctype": doctype_name,
-									"name": doc_name,
-									"message": "Document already exists locally"
+
+								"doctype": doctype_name,
+
+								"name": doc_name,
+
+								"message": "Document already exists locally"
+
 								})
+
 								continue
+
 							except frappe.DoesNotExistError:
+
+
 								# Document doesn't exist locally, fetch it
+
 								pass
+
 						
 						# Check if document belongs to specified company
 						company = getattr(settings, 'company', None)
