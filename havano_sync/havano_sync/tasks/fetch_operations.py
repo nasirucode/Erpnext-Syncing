@@ -21,6 +21,254 @@ from havano_sync.havano_sync.tasks.queue import create_sync_log
 from havano_sync.havano_sync.tasks.sync_operations import handle_link_validation_error
 
 
+def delete_local_documents_not_on_remote(doctype: str, item_code: str, remote_item_prices: list):
+	"""
+	Delete local documents that don't exist on remote.
+	For Item Price, this deletes local Item Prices for an item that don't have a matching
+	item_code, price_list, and rate combination in the remote Item Prices list.
+	
+	Args:
+		doctype: The doctype to check (e.g., "Item Price")
+		item_code: The item code to filter by (for Item Price)
+		remote_item_prices: List of remote Item Price documents (dicts with item_code, price_list, rate)
+	"""
+	try:
+		if doctype != "Item Price":
+			frappe.logger().warning(f"delete_local_documents_not_on_remote is currently only supported for Item Price")
+			return {
+				"status": "skipped",
+				"message": f"Function only supports Item Price doctype"
+			}
+		
+		# Get all local Item Prices for this item
+		local_item_prices = frappe.get_all(
+			doctype,
+			filters={"item_code": item_code},
+			# Use price_list_rate (standard Item Price field) instead of rate
+			fields=["name", "item_code", "price_list", "price_list_rate"]
+		)
+		
+		if not local_item_prices:
+			frappe.logger().info(f"No local {doctype} documents found for item {item_code}")
+			return {
+				"status": "success",
+				"message": f"No local documents to check",
+				"deleted_count": 0
+			}
+		
+		# Create a set of remote Item Price keys (item_code, price_list, price_list_rate) for faster lookup
+		remote_keys_set = set()
+		for remote_price in remote_item_prices:
+			if isinstance(remote_price, dict):
+				remote_item_code = remote_price.get('item_code')
+				remote_price_list = remote_price.get('price_list')
+				remote_price_list_rate = remote_price.get('price_list_rate')
+				# Normalize price_list_rate to string for comparison (handle float precision)
+				if remote_item_code == item_code and remote_price_list and remote_price_list_rate is not None:
+					# Create a key from item_code, price_list, and price_list_rate
+					rate_str = str(float(remote_price_list_rate)) if remote_price_list_rate else "0"
+					key = (remote_item_code, remote_price_list, rate_str)
+					remote_keys_set.add(key)
+		
+		# Find local documents that don't have a matching combination in remote
+		documents_to_delete = []
+		for local_doc in local_item_prices:
+			local_item_code = local_doc.get("item_code")
+			local_price_list = local_doc.get("price_list")
+			local_price_list_rate = local_doc.get("price_list_rate")
+			
+			# Normalize price_list_rate to string for comparison
+			rate_str = str(float(local_price_list_rate)) if local_price_list_rate is not None else "0"
+			local_key = (local_item_code, local_price_list, rate_str)
+			
+			if local_key not in remote_keys_set:
+				documents_to_delete.append(local_doc["name"])
+		
+		if not documents_to_delete:
+			frappe.logger().info(f"All local {doctype} documents for item {item_code} exist on remote")
+			return {
+				"status": "success",
+				"message": f"All local documents exist on remote",
+				"deleted_count": 0
+			}
+		
+		# Delete documents that don't exist on remote
+		deleted_count = 0
+		deleted_names = []
+		for doc_name in documents_to_delete:
+			try:
+				frappe.logger().info(f"[Delete Local] Deleting {doctype} {doc_name} (item_code, price_list, rate combination not found on remote)")
+				frappe.delete_doc(doctype, doc_name, ignore_permissions=True, force=True)
+				frappe.db.commit()
+				deleted_count += 1
+				deleted_names.append(doc_name)
+			except Exception as delete_error:
+				frappe.log_error(
+					title=f"Failed to delete {doctype} {doc_name}",
+					message=f"Error deleting {doctype} {doc_name}: {str(delete_error)}\n{frappe.get_traceback()}"
+				)
+		
+		frappe.logger().info(f"[Delete Local] Deleted {deleted_count} {doctype} documents for item {item_code} that don't exist on remote")
+		
+		return {
+			"status": "success",
+			"message": f"Deleted {deleted_count} local documents that don't exist on remote",
+			"deleted_count": deleted_count,
+			"deleted_names": deleted_names
+		}
+		
+	except Exception as e:
+		frappe.log_error(
+			title=f"Error in delete_local_documents_not_on_remote for {doctype}",
+			message=f"Error deleting local documents not on remote: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Error deleting local documents: {str(e)}"
+		}
+
+
+def cleanup_item_prices_not_on_remote():
+	"""
+	Cleanup function to delete local Item Prices that don't exist on remote.
+	This function fetches all remote Item Prices, groups them by item_code,
+	and deletes local Item Prices that don't have a matching sync_reference.
+	
+	This is called after fetching Item Prices to ensure cleanup happens.
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.utils import get_sync_settings, get_decrypted_api_secret, should_sync_doctype
+		from havano_sync.havano_sync.utils.sync_api import SyncAPI
+		from frappe.utils import cint
+		
+		settings = get_sync_settings()
+		
+		# Check if settings are configured
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			frappe.logger().warning("Havano Sync Settings not properly configured for Item Price cleanup")
+			return {
+				"status": "skipped",
+				"message": "Settings not configured"
+			}
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return {
+				"status": "skipped",
+				"message": "Sync is disabled"
+			}
+		
+		# Check if Item Price is enabled for fetching
+		syncable_doctypes = get_syncable_doctypes(settings)
+		item_price_fetch_enabled = False
+		
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+			
+			if doctype_name == "Item Price" and fetch_enabled:
+				item_price_fetch_enabled = True
+				break
+		
+		if not item_price_fetch_enabled:
+			return {
+				"status": "skipped",
+				"message": "Item Price fetch is not enabled"
+			}
+		
+		# Get decrypted API secret
+		api_secret = get_decrypted_api_secret(settings)
+		if not api_secret:
+			raise ValueError("API Secret is not configured or could not be decrypted")
+		
+		# Initialize API client
+		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
+		
+		# Get all Item Prices from remote
+		endpoint = "frappe.client.get_list"
+		params = {
+			"doctype": "Item Price",
+			"limit_page_length": 10000  # Get all Item Prices
+		}
+		
+		remote_docs = api_client._make_request("GET", endpoint, params=params)
+		
+		if not remote_docs or not isinstance(remote_docs, list):
+			frappe.logger().info("No remote Item Prices found for cleanup")
+			return {
+				"status": "success",
+				"message": "No remote Item Prices found",
+				"deleted_count": 0
+			}
+		
+		# Group remote Item Prices by item_code
+		item_price_by_item = {}
+		
+		for remote_doc_info in remote_docs:
+			doc_name = remote_doc_info.get('name')
+			if not doc_name:
+				continue
+			
+			# Get the full document to access item_code, price_list, and rate
+			try:
+				remote_doc = api_client.get_document("Item Price", doc_name)
+				item_code = remote_doc.get('item_code')
+				price_list = remote_doc.get('price_list')
+				rate = remote_doc.get('rate')
+				
+				if item_code:
+					if item_code not in item_price_by_item:
+						item_price_by_item[item_code] = []
+					# Store the full document data for matching
+					item_price_by_item[item_code].append({
+						'item_code': item_code,
+						'price_list': price_list,
+						'rate': rate
+					})
+			except Exception as e:
+				frappe.logger().warning(f"Could not get data for remote Item Price {doc_name}: {str(e)}")
+		
+		# For each item, delete local Item Prices that don't exist on remote
+		total_deleted = 0
+		for item_code, remote_prices in item_price_by_item.items():
+			try:
+				delete_result = delete_local_documents_not_on_remote(
+					"Item Price",
+					item_code,
+					remote_prices
+				)
+				deleted_count = delete_result.get("deleted_count", 0)
+				total_deleted += deleted_count
+				if deleted_count > 0:
+					frappe.logger().info(f"Deleted {deleted_count} local Item Prices for item {item_code} that don't exist on remote")
+			except Exception as e:
+				frappe.log_error(
+					title=f"Error deleting local Item Prices for item {item_code}",
+					message=f"Error deleting local Item Prices: {str(e)}"
+				)
+		
+		frappe.logger().info(f"[Cleanup] Total deleted {total_deleted} local Item Prices that don't exist on remote")
+		
+		return {
+			"status": "success",
+			"message": f"Cleanup completed. Deleted {total_deleted} local Item Prices.",
+			"deleted_count": total_deleted
+		}
+		
+	except Exception as e:
+		frappe.log_error(
+			title="Error in cleanup_item_prices_not_on_remote",
+			message=f"Error cleaning up Item Prices: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Error during cleanup: {str(e)}"
+		}
+
+
 def fetch_document_from_remote(doctype: str, name: str):
 	"""
 	Fetch a single document from remote server and create/update it locally
@@ -826,31 +1074,228 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 				if not remote_docs or not isinstance(remote_docs, list):
 					continue
 				
+				# For Item Price, group by item_code and delete local ones not on remote
+				# First, collect all remote Item Prices and group by item_code
+				item_price_by_item = {}
+				remote_docs_cache = {}  # Cache remote docs to avoid fetching twice
+				
+				if doctype_name == "Item Price":
+					for remote_doc_info in remote_docs:
+						doc_name = remote_doc_info.get('name')
+						if not doc_name:
+							continue
+						
+						# Get the full document to access item_code, price_list, and rate
+						try:
+							remote_doc = api_client.get_document(doctype_name, doc_name)
+							remote_docs_cache[doc_name] = remote_doc  # Cache for later use
+							item_code = remote_doc.get('item_code')
+							price_list = remote_doc.get('price_list')
+							rate = remote_doc.get('rate')
+							
+							if not item_code:
+								continue
+							
+							# Group remote Item Prices by item_code
+							if item_code not in item_price_by_item:
+								item_price_by_item[item_code] = []
+							
+							# Store the full document data for matching
+							item_price_by_item[item_code].append({
+								'item_code': item_code,
+								'price_list': price_list,
+								'rate': rate
+							})
+						except Exception as e:
+							frappe.logger().warning(f"Could not get data for remote Item Price {doc_name}: {str(e)}")
+					
+					# For each item, delete local Item Prices that don't exist on remote
+					for item_code, remote_prices in item_price_by_item.items():
+						try:
+							delete_result = delete_local_documents_not_on_remote(
+								doctype_name,
+								item_code,
+								remote_prices
+							)
+							if delete_result.get("deleted_count", 0) > 0:
+								frappe.logger().info(
+									f"Deleted {delete_result['deleted_count']} local Item Prices for item {item_code} that don't exist on remote"
+								)
+						except Exception as e:
+							frappe.log_error(
+								title=f"Error deleting local Item Prices for item {item_code}",
+								message=f"Error deleting local Item Prices: {str(e)}"
+							)
+				
 				for remote_doc_info in remote_docs:
 					doc_name = remote_doc_info.get('name')
 					if not doc_name:
 						continue
 					
-					# Check if document already exists locally - skip if it does
-					try:
-						frappe.get_doc(doctype_name, doc_name)
-						results["skipped"].append({
-							"doctype": doctype_name,
-							"name": doc_name,
-							"message": "Document already exists locally"
-						})
+						# Get the full document to access item_code, price_list, and rate
+						try:
+							remote_doc = api_client.get_document(doctype_name, doc_name)
+							remote_docs_cache[doc_name] = remote_doc  # Cache for later use
+							item_code = remote_doc.get('item_code')
+							price_list = remote_doc.get('price_list')
+							rate = remote_doc.get('rate')
+							
+							if item_code:
+								if item_code not in item_price_by_item:
+									item_price_by_item[item_code] = []
+								# Store the full document data for matching
+								item_price_by_item[item_code].append({
+									'item_code': item_code,
+									'price_list': price_list,
+									'rate': rate
+								})
+						except Exception as e:
+							frappe.logger().warning(f"Could not get data for remote Item Price {doc_name}: {str(e)}")
+					
+					# For each item, delete local Item Prices that don't exist on remote
+					for item_code, remote_prices in item_price_by_item.items():
+						try:
+							delete_result = delete_local_documents_not_on_remote(
+								doctype_name,
+								item_code,
+								remote_prices
+							)
+							if delete_result.get("deleted_count", 0) > 0:
+								frappe.logger().info(f"Deleted {delete_result['deleted_count']} local Item Prices for item {item_code} that don't exist on remote")
+						except Exception as e:
+							frappe.log_error(
+								title=f"Error deleting local Item Prices for item {item_code}",
+								message=f"Error deleting local Item Prices: {str(e)}"
+							)
+				
+				for remote_doc_info in remote_docs:
+					doc_name = remote_doc_info.get('name')
+					if not doc_name:
 						continue
-					except frappe.DoesNotExistError:
-						# Document doesn't exist locally, fetch it
-						pass
 					
 					# Fetch the document (call the function directly, not via API)
 					try:
 						# Get decrypted API secret
 						api_secret = get_decrypted_api_secret(settings)
 						
-						# Fetch document from remote
-						remote_doc = api_client.get_document(doctype_name, doc_name)
+						# Fetch document from remote (use cache if available for Item Price)
+						if doctype_name == "Item Price" and doc_name in remote_docs_cache:
+							remote_doc = remote_docs_cache[doc_name]
+						else:
+							remote_doc = api_client.get_document(doctype_name, doc_name)
+						
+						# For Item Price, check if document exists by item_code, price_list, and rate
+						if doctype_name == "Item Price":
+							remote_item_code = remote_doc.get('item_code')
+							remote_price_list = remote_doc.get('price_list')
+							remote_rate = remote_doc.get('rate')
+							
+							if remote_item_code and remote_price_list and remote_rate is not None:
+								# Check if local Item Price exists with same item_code, price_list, and rate
+								existing_item_price = frappe.db.get_value(
+									doctype_name,
+									{
+										"item_code": remote_item_code,
+										"price_list": remote_price_list,
+										"rate": remote_rate
+									},
+									"name"
+								)
+								
+								if existing_item_price:
+									# Document exists - update it instead of skipping
+									try:
+										frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}, rate={remote_rate}. Updating.")
+										local_doc = frappe.get_doc(doctype_name, existing_item_price)
+										meta = frappe.get_meta(doctype_name)
+										
+										# Update document fields with remote data
+										updated_fields = []
+										for fieldname, value in doc_data.items():
+											if fieldname in metadata_fields:
+												continue
+											
+											field = meta.get_field(fieldname)
+											if field and (field.read_only or field.fieldtype in ['Section Break', 'Column Break', 'Tab Break']):
+												continue
+											
+											if field and field.fieldtype == 'Table':
+												continue
+											
+											if hasattr(local_doc, fieldname):
+												try:
+													old_value = getattr(local_doc, fieldname, None)
+													setattr(local_doc, fieldname, value)
+													if old_value != value:
+														updated_fields.append(fieldname)
+												except Exception:
+													pass
+										
+										# Handle child tables
+										for field in meta.fields:
+											if field.fieldtype == "Table" and field.fieldname in doc_data:
+												child_table_data = doc_data.get(field.fieldname, [])
+												if child_table_data:
+													local_doc.set(field.fieldname, [])
+													for child_row in child_table_data:
+														child_doc = local_doc.append(field.fieldname)
+														for child_fieldname, child_value in child_row.items():
+															if child_fieldname not in metadata_fields:
+																try:
+																	setattr(child_doc, child_fieldname, child_value)
+																except Exception:
+																	pass
+										
+										# Update sync fields
+										local_doc.sync_type = "Remote"
+										if is_compulsory or is_syncable:
+											local_doc.sync_reference = doc_name
+										
+										# Save the updated document
+										local_doc.save(ignore_permissions=True)
+										frappe.db.commit()
+										
+										# Set sync_status to "Fetched"
+										try:
+											from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
+											ensure_sync_status_field_exists(doctype_name)
+											if frappe.db.has_column(doctype_name, 'sync_status'):
+												frappe.db.set_value(doctype_name, existing_item_price, 'sync_status', 'Fetched', update_modified=False)
+												frappe.db.commit()
+												frappe.logger().info(f"[Item Price Update] Set sync_status='Fetched' for {doctype_name} {existing_item_price}")
+										except Exception as sync_status_error:
+											frappe.log_error(
+												title="Failed to set sync_status on updated document",
+												message=f"Could not set sync_status='Fetched' on {doctype_name} {existing_item_price}: {str(sync_status_error)}"
+											)
+										
+										results["success"].append({
+											"doctype": doctype_name,
+											"name": existing_item_price,
+											"message": f"Document updated successfully (matched by item_code, price_list, rate)"
+										})
+										continue
+									except Exception as update_error:
+										frappe.log_error(
+											title=f"Failed to update {doctype_name} {existing_item_price}",
+											message=f"Error updating {doctype_name} {existing_item_price}: {str(update_error)}"
+										)
+										# If update fails, continue to create as new
+										frappe.logger().info(f"Update failed for {doctype_name} {existing_item_price}, will attempt to create as new")
+						
+						# For non-Item Price doctypes, check if document exists by name
+						if doctype_name != "Item Price":
+							try:
+								frappe.get_doc(doctype_name, doc_name)
+								results["skipped"].append({
+									"doctype": doctype_name,
+									"name": doc_name,
+									"message": "Document already exists locally"
+								})
+								continue
+							except frappe.DoesNotExistError:
+								# Document doesn't exist locally, fetch it
+								pass
 						
 						# Check if document belongs to specified company
 						company = getattr(settings, 'company', None)

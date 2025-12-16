@@ -801,7 +801,7 @@ def fetch_items_and_item_prices_cron_job():
 			frappe.enqueue(
 				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
 				doctype="Item",
-				queue="default",  # Use default queue for faster processing
+				queue="short",  # Use default queue for faster processing
 				timeout=300,
 				is_async=True,
 				job_name="fetch_items_cron"
@@ -811,10 +811,20 @@ def fetch_items_and_item_prices_cron_job():
 			frappe.enqueue(
 				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
 				doctype="Item Price",
-				queue="default",  # Use default queue for faster processing
+				queue="short",  # Use default queue for faster processing
 				timeout=300,
 				is_async=True,
 				job_name="fetch_item_prices_cron"
+			)
+			
+			# After fetching, cleanup local Item Prices that don't exist on remote
+			# This runs after a delay to ensure fetch completes first
+			frappe.enqueue(
+				"havano_sync.havano_sync.tasks.fetch_operations.cleanup_item_prices_not_on_remote",
+				queue="short",
+				timeout=300,
+				is_async=True,
+				job_name="cleanup_item_prices_cron"
 			)
 	except Exception as e:
 		frappe.log_error(

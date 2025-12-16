@@ -406,19 +406,30 @@ def trigger_fetch_item_prices_and_exchange_rates():
 def trigger_fetch_items_and_item_prices():
 	"""
 	API endpoint to manually trigger fetch of Items and Item Prices from remote
+	Also triggers cleanup to delete local Item Prices that don't exist on remote
 	
 	Usage:
 		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_items_and_item_prices
 	"""
 	from havano_sync.havano_sync.tasks.sync import fetch_items_and_item_prices_cron_job
+	from havano_sync.havano_sync.tasks.fetch_operations import cleanup_item_prices_not_on_remote
 	
 	try:
-		# Call the cron job function directly
+		# Call the cron job function directly (this will fetch Items and Item Prices)
 		fetch_items_and_item_prices_cron_job()
+		
+		# Also trigger cleanup to delete local Item Prices not on remote
+		# This runs after a short delay to ensure fetch completes first
+		frappe.enqueue(
+			"havano_sync.havano_sync.tasks.fetch_operations.cleanup_item_prices_not_on_remote",
+			queue="short",
+			timeout=300,
+			job_name=f"cleanup_item_prices_{frappe.utils.now()}"
+		)
 		
 		return {
 			"status": "success",
-			"message": "Items and Item Prices fetch has been queued. They will be fetched in the background."
+			"message": "Items and Item Prices fetch has been queued. Cleanup will run after fetch completes."
 		}
 	except Exception as e:
 		frappe.log_error(
