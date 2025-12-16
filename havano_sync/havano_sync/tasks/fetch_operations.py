@@ -56,30 +56,28 @@ def delete_local_documents_not_on_remote(doctype: str, item_code: str, remote_it
 				"deleted_count": 0
 			}
 		
-		# Create a set of remote Item Price keys (item_code, price_list, price_list_rate) for faster lookup
+		# Create a set of remote Item Price keys (item_code, price_list) for faster lookup
+		# We match by item_code and price_list only, not by price_list_rate
+		# because price_list_rate is updated during fetch
 		remote_keys_set = set()
 		for remote_price in remote_item_prices:
 			if isinstance(remote_price, dict):
 				remote_item_code = remote_price.get('item_code')
 				remote_price_list = remote_price.get('price_list')
-				remote_price_list_rate = remote_price.get('price_list_rate')
-				# Normalize price_list_rate to string for comparison (handle float precision)
-				if remote_item_code == item_code and remote_price_list and remote_price_list_rate is not None:
-					# Create a key from item_code, price_list, and price_list_rate
-					rate_str = str(float(remote_price_list_rate)) if remote_price_list_rate else "0"
-					key = (remote_item_code, remote_price_list, rate_str)
+				# Match by item_code and price_list only
+				if remote_item_code == item_code and remote_price_list:
+					# Create a key from item_code and price_list
+					key = (remote_item_code, remote_price_list)
 					remote_keys_set.add(key)
 		
-		# Find local documents that don't have a matching combination in remote
+		# Find local documents that don't have a matching item_code and price_list in remote
 		documents_to_delete = []
 		for local_doc in local_item_prices:
 			local_item_code = local_doc.get("item_code")
 			local_price_list = local_doc.get("price_list")
-			local_price_list_rate = local_doc.get("price_list_rate")
 			
-			# Normalize price_list_rate to string for comparison
-			rate_str = str(float(local_price_list_rate)) if local_price_list_rate is not None else "0"
-			local_key = (local_item_code, local_price_list, rate_str)
+			# Create key from item_code and price_list only
+			local_key = (local_item_code, local_price_list)
 			
 			if local_key not in remote_keys_set:
 				documents_to_delete.append(local_doc["name"])
@@ -97,7 +95,7 @@ def delete_local_documents_not_on_remote(doctype: str, item_code: str, remote_it
 		deleted_names = []
 		for doc_name in documents_to_delete:
 			try:
-				frappe.logger().info(f"[Delete Local] Deleting {doctype} {doc_name} (item_code, price_list, rate combination not found on remote)")
+				frappe.logger().info(f"[Delete Local] Deleting {doctype} {doc_name} (item_code, price_list combination not found on remote)")
 				frappe.delete_doc(doctype, doc_name, ignore_permissions=True, force=True)
 				frappe.db.commit()
 				deleted_count += 1
@@ -1084,11 +1082,14 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						doc_name = remote_doc_info.get('name')
 
 
+
 						if not doc_name:
+
 
 
 							continue
 
+					
 					
 					
 						# Get the full document to access item_code, price_list, and price_list_rate
@@ -1263,22 +1264,30 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 
 								frappe.get_doc(doctype_name, doc_name)
 
+
 								results["skipped"].append({
+
 
 								"doctype": doctype_name,
 
+
 								"name": doc_name,
+
 
 								"message": "Document already exists locally"
 
-								})
+
+						})
 
 								continue
+
 
 							except frappe.DoesNotExistError:
 
 
+
 								# Document doesn't exist locally, fetch it
+
 
 								pass
 
@@ -1359,20 +1368,23 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 							# Set sync_reference (sync_type already set above)
 							doc_data['sync_reference'] = doc_name
 						
-						# Check if document already exists before creating (use original name, no -Local suffix)
-						# Use transaction-safe check
-						frappe.db.begin()
-						try:
-							if frappe.db.exists(doctype_name, doc_name):
+						# Check if document already exists before creating
+						# For Item Price, we already checked by item_code and price_list above
+						# For other doctypes, check by name
+						if doctype_name != "Item Price":
+							# Use transaction-safe check
+							frappe.db.begin()
+							try:
+								if frappe.db.exists(doctype_name, doc_name):
+									frappe.db.rollback()
+									results["success"].append({
+										"doctype": doctype_name,
+										"name": doc_name,
+										"message": "Document already exists locally, skipped"
+									})
+									continue
+							except Exception:
 								frappe.db.rollback()
-								results["success"].append({
-									"doctype": doctype_name,
-									"name": doc_name,
-									"message": "Document already exists locally, skipped"
-								})
-								continue
-						except Exception:
-							frappe.db.rollback()
 						
 						# Create the document with original name (no -Local suffix for fetched documents)
 						doc_data['name'] = doc_name  # Ensure name is set to original name
