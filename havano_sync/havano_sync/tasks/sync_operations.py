@@ -1010,6 +1010,32 @@ def sync_document_to_remote(
 		doc_data = prepare_doc_for_sync(doc)
 		doc_data['doctype'] = doctype
 		
+		# For Sales Invoice, Payment Entry, and Quotation, ensure due_date >= posting_date to avoid validation errors
+		# Note: Standard Frappe API doesn't support ignore_validate for insert, so we adjust data to pass validation
+		# To fully bypass validation, a custom endpoint on the remote server would be required
+		doctypes_no_update = {'Sales Invoice', 'Payment Entry', 'Quotation'}
+		if doctype in doctypes_no_update:
+			if 'posting_date' in doc_data and 'due_date' in doc_data:
+				from datetime import datetime
+				try:
+					# Parse dates - handle ISO format strings
+					posting_date_str = doc_data['posting_date']
+					due_date_str = doc_data['due_date']
+					
+					# Parse dates (remove timezone info if present for comparison)
+					posting_date = datetime.fromisoformat(posting_date_str.split('T')[0]) if isinstance(posting_date_str, str) and 'T' in posting_date_str else datetime.strptime(posting_date_str, '%Y-%m-%d') if isinstance(posting_date_str, str) else posting_date_str
+					due_date = datetime.fromisoformat(due_date_str.split('T')[0]) if isinstance(due_date_str, str) and 'T' in due_date_str else datetime.strptime(due_date_str, '%Y-%m-%d') if isinstance(due_date_str, str) else due_date_str
+					
+					if isinstance(due_date, datetime) and isinstance(posting_date, datetime):
+						if due_date.date() < posting_date.date():
+							# Set due_date to posting_date to avoid validation error
+							# Preserve the original format
+							doc_data['due_date'] = doc_data['posting_date']
+							frappe.logger().info(f"Adjusted due_date to match posting_date for {doctype} {actual_name} to avoid validation error (due_date was before posting_date)")
+				except (ValueError, AttributeError, TypeError) as e:
+					# If date parsing fails, continue without modification
+					frappe.logger().debug(f"Could not parse dates for {doctype} {actual_name}: {str(e)}")
+		
 		# Set the name field in doc_data
 		# Always use actual_name (original name, not renamed)
 		# For other doctypes, actual_name may have -Local suffix

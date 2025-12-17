@@ -302,8 +302,11 @@ class SyncAPI:
 		
 		try:
 			# Build form data
+			# Note: Standard frappe.client.insert doesn't support ignore_validate as a parameter
+			# If the remote server has custom handling for ignore_validate, it can check form parameters
 			form_data = {"doc": json.dumps(doc)}
 			if ignore_validate:
+				# Pass ignore_validate as a form parameter - custom remote endpoints can use this
 				form_data["ignore_validate"] = "1"
 			if ignore_permissions:
 				form_data["ignore_permissions"] = "1"
