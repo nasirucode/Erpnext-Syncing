@@ -22,11 +22,19 @@ def prepare_doc_for_sync(doc) -> Dict[str, Any]:
 	]
 	# Note: 
 	# - docstatus is NOT excluded - we need it for submittable doctypes
-	# - name is NOT excluded - we need to sync the document name (with -Local suffix) to remote
+	# - name is NOT excluded by default - we need to sync the document name (with -Local suffix) to remote
+	# - However, name and naming_series IS excluded for Sales Invoice, Payment Entry, and Quotation
+	#   (remote will generate the name using its own naming series)
+	
+	# Doctypes that should not include 'name' and 'naming_series' fields in sync data
+	doctypes_exclude_name = {'Sales Invoice', 'Payment Entry', 'Quotation'}
 	
 	# Also exclude child table internal fields
 	for key in list(doc_dict.keys()):
 		if key in exclude_fields or key.startswith('_'):
+			doc_dict.pop(key, None)
+		# Remove 'name' and 'naming_series' fields for specific doctypes
+		elif key in ('name', 'naming_series') and doc.doctype in doctypes_exclude_name:
 			doc_dict.pop(key, None)
 		# Convert date/datetime/timedelta objects to ISO format strings for JSON serialization
 		elif isinstance(doc_dict[key], (date, datetime)):

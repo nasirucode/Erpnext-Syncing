@@ -277,10 +277,16 @@ class SyncAPI:
 			)
 			raise requests.exceptions.HTTPError(error_msg, response=e.response)
 	
-	def create_document(self, doctype: str, doc: Dict[str, Any]) -> Dict[str, Any]:
+	def create_document(self, doctype: str, doc: Dict[str, Any], ignore_validate: bool = False, ignore_permissions: bool = False) -> Dict[str, Any]:
 		"""
 		Create a document on the remote instance
 		frappe.client.insert expects the document data to be passed as 'doc' parameter
+		
+		Args:
+			doctype: Document type
+			doc: Document data dictionary
+			ignore_validate: If True, bypass validation (default: False)
+			ignore_permissions: If True, bypass permission checks (default: False)
 		"""
 		endpoint = "frappe.client.insert"
 		# Ensure doctype is set
@@ -295,11 +301,18 @@ class SyncAPI:
 		headers["Content-Type"] = "application/x-www-form-urlencoded"
 		
 		try:
+			# Build form data
+			form_data = {"doc": json.dumps(doc)}
+			if ignore_validate:
+				form_data["ignore_validate"] = "1"
+			if ignore_permissions:
+				form_data["ignore_permissions"] = "1"
+			
 			# Send doc as JSON string in form data
 			response = self.session.post(
 				url, 
 				headers=headers, 
-				data={"doc": json.dumps(doc)}, 
+				data=form_data, 
 				timeout=30
 			)
 			response.raise_for_status()

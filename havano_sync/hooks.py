@@ -171,7 +171,7 @@ scheduler_events = {
 			"havano_sync.havano_sync.tasks.sync.process_queue_cron_job"
 		],
 		"*/5 * * * *": [
-			"havano_sync.havano_sync.tasks.sync_operations.rename_remote_sales_invoices_by_sync_reference",
+			# "havano_sync.havano_sync.tasks.sync_operations.rename_remote_sales_invoices_by_sync_reference",
 			"havano_sync.havano_sync.tasks.sync.check_internet_and_sync_cron_job"
 		],
 		"*/2 * * * *": [
