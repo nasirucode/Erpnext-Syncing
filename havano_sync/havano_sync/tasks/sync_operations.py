@@ -1010,6 +1010,11 @@ def sync_document_to_remote(
 		doc_data = prepare_doc_for_sync(doc)
 		doc_data['doctype'] = doctype
 		
+		# For Sales Invoice, ensure set_posting_time is set to 1
+		if doctype == 'Sales Invoice':
+			doc_data['set_posting_time'] = 1
+			frappe.logger().debug(f"Set set_posting_time=1 for Sales Invoice {actual_name}")
+		
 		# For all doctypes, ensure due_date >= posting_date to avoid validation errors
 		# Always set due_date = posting_date when due_date < posting_date
 		# Note: Standard Frappe API doesn't support ignore_validate for insert, so we adjust data to pass validation
@@ -1556,6 +1561,9 @@ def sync_document_to_remote(
 						raise
 				
 				if doc_exists:
+					# For Sales Invoice, ensure set_posting_time is set to 1 before updating
+					if doctype == 'Sales Invoice':
+						doc_data['set_posting_time'] = 1
 					result = api_client.update_document(doctype, update_name, doc_data)
 					action = "updated"
 			except requests.exceptions.HTTPError as update_error:
@@ -1567,6 +1575,9 @@ def sync_document_to_remote(
 					)
 					if handled:
 						try:
+							# For Sales Invoice, ensure set_posting_time is set to 1 before updating
+							if doctype == 'Sales Invoice':
+								doc_data['set_posting_time'] = 1
 							result = api_client.update_document(doctype, update_name, doc_data)
 							action = "updated"
 						except Exception:
@@ -1626,6 +1637,10 @@ def sync_document_to_remote(
 				frappe.logger().info(f"Creating document {doctype} with name {current_doc_name} on remote (actual_name was: {actual_name}, doc.name is: {doc.name if hasattr(doc, 'name') else 'N/A'})")
 			
 			try:
+				# For Sales Invoice, ensure set_posting_time is set to 1 before creating/updating
+				if doctype == 'Sales Invoice':
+					doc_data['set_posting_time'] = 1
+				
 				# For submittable doctypes with docstatus=1, try creating directly with docstatus=1
 				# If that fails, fall back to creating as draft then submitting
 				# For Sales Invoice, Payment Entry, and Quotation, bypass validation to sync data as-is
@@ -1836,6 +1851,9 @@ def sync_document_to_remote(
 					try:
 						# Verify it exists
 						api_client.get_document(doctype, update_name)
+						# For Sales Invoice, ensure set_posting_time is set to 1 before updating
+						if doctype == 'Sales Invoice':
+							doc_data['set_posting_time'] = 1
 						result = api_client.update_document(doctype, update_name, doc_data)
 						action = "updated"
 						frappe.logger().info(f"Updated existing document {doctype} {update_name}")
@@ -1916,6 +1934,9 @@ def sync_document_to_remote(
 						update_name = api_client.find_document_by_sync_reference(doctype, attempted_sync_ref, sync_type="Local")
 						if update_name:
 							try:
+								# For Sales Invoice, ensure set_posting_time is set to 1 before updating
+								if doctype == 'Sales Invoice':
+									doc_data['set_posting_time'] = 1
 								result = api_client.update_document(doctype, update_name, doc_data)
 								action = "updated"
 								frappe.logger().info(f"Updated existing document {doctype} {update_name} with same sync_reference")
