@@ -1044,8 +1044,8 @@ def sync_document_to_remote(
 		# Doctypes that should not include 'name' field in sync data
 		doctypes_exclude_name = {'Sales Invoice', 'Payment Entry', 'Quotation'}
 		if doctype not in doctypes_exclude_name:
-			doc_data['name'] = current_doc_name
-			frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name}")
+		doc_data['name'] = current_doc_name
+		frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name}")
 		else:
 			frappe.logger().info(f"Prepared doc_data for {doctype}, name field excluded (doctype syncs without name)")
 		
@@ -1455,7 +1455,7 @@ def sync_document_to_remote(
 			# The name is passed separately to the API, so we don't need it in doc_data
 			remote_document_name = existing_doc_by_reference.get('name') if existing_doc_by_reference else name
 			if doctype not in doctypes_exclude_name:
-				doc_data['name'] = remote_document_name
+			doc_data['name'] = remote_document_name
 			frappe.logger().info(f"Updating existing document {doctype} {remote_document_name} (local name: {actual_name})")
 		else:
 			# For new documents, check if document exists by name OR by sync_reference
@@ -1480,11 +1480,11 @@ def sync_document_to_remote(
 					# Check by actual_name (local document name)
 					remote_name_by_ref = api_client.find_document_by_sync_reference(doctype, actual_name, sync_type="Local")
 					if remote_name_by_ref:
-					# For doctypes that should not be updated, don't mark as existing
-					if doctype not in doctypes_no_update:
+						# For doctypes that should not be updated, don't mark as existing
+						if doctype not in doctypes_no_update:
 						doc_exists = True
 						remote_document_name = remote_name_by_ref
-						if doctype not in doctypes_exclude_name:
+							if doctype not in doctypes_exclude_name:
 						doc_data['name'] = remote_name_by_ref
 						frappe.logger().info(f"Document {doctype} found by sync_reference {actual_name} as {remote_name_by_ref}, will update")
 					else:
