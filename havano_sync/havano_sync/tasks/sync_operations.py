@@ -89,7 +89,7 @@ def ensure_sync_fields_exist_on_remote(doctype: str, api_client: Any, settings: 
 					"description": "Reference to the corresponding document in remote/local instance",
 					"read_only": 1,
 					"no_copy": 1,
-					"unique": 1,  # Mark as unique to avoid duplication
+					"unique": 0,  # Not unique - multiple documents can have the same sync_reference
 					"idx": max_idx + 1
 				}
 				doctype_doc['fields'].append(sync_ref_field)
@@ -1461,51 +1461,51 @@ def sync_document_to_remote(
 			# For new documents, check if document exists by name OR by sync_reference
 			# This prevents creating duplicates
 			if doctype not in doctypes_exclude_name:
-				doc_data['name'] = current_doc_name
-				try:
+			doc_data['name'] = current_doc_name
+			try:
 					# First check by name (only for doctypes that include name)
-					api_client.get_document(doctype, current_doc_name)
+				api_client.get_document(doctype, current_doc_name)
 					# For doctypes that should not be updated, don't mark as existing
 					if doctype not in doctypes_no_update:
-						doc_exists = True
-						remote_document_name = current_doc_name
-						frappe.logger().info(f"Document {doctype} {current_doc_name} exists by name, will update")
-				except (DocumentNotFoundError, requests.exceptions.HTTPError):
-					# Not found by name, check by sync_reference
+				doc_exists = True
+				remote_document_name = current_doc_name
+				frappe.logger().info(f"Document {doctype} {current_doc_name} exists by name, will update")
+			except (DocumentNotFoundError, requests.exceptions.HTTPError):
+				# Not found by name, check by sync_reference
 					pass
 			
 			# For doctypes that exclude name, or if not found by name, check by sync_reference
 			# Skip for doctypes that should never be updated
 			if not doc_exists and (is_compulsory or is_syncable) and doctype not in doctypes_no_update:
-				# Check by actual_name (local document name)
-				remote_name_by_ref = api_client.find_document_by_sync_reference(doctype, actual_name, sync_type="Local")
-				if remote_name_by_ref:
+					# Check by actual_name (local document name)
+					remote_name_by_ref = api_client.find_document_by_sync_reference(doctype, actual_name, sync_type="Local")
+					if remote_name_by_ref:
 					# For doctypes that should not be updated, don't mark as existing
 					if doctype not in doctypes_no_update:
 						doc_exists = True
 						remote_document_name = remote_name_by_ref
 						if doctype not in doctypes_exclude_name:
-							doc_data['name'] = remote_name_by_ref
+						doc_data['name'] = remote_name_by_ref
 						frappe.logger().info(f"Document {doctype} found by sync_reference {actual_name} as {remote_name_by_ref}, will update")
-				else:
-					# Also check by the sync_reference value we're about to set (in case it's different)
-					sync_ref_value = doc_data.get('sync_reference')
-					if sync_ref_value and sync_ref_value != actual_name:
-						remote_name_by_ref2 = api_client.find_document_by_sync_reference(doctype, sync_ref_value, sync_type="Local")
-						if remote_name_by_ref2:
+					else:
+						# Also check by the sync_reference value we're about to set (in case it's different)
+						sync_ref_value = doc_data.get('sync_reference')
+						if sync_ref_value and sync_ref_value != actual_name:
+							remote_name_by_ref2 = api_client.find_document_by_sync_reference(doctype, sync_ref_value, sync_type="Local")
+							if remote_name_by_ref2:
 							# For doctypes that should not be updated, don't mark as existing
 							if doctype not in doctypes_no_update:
 								doc_exists = True
 								remote_document_name = remote_name_by_ref2
 								if doctype not in doctypes_exclude_name:
-									doc_data['name'] = remote_name_by_ref2
+								doc_data['name'] = remote_name_by_ref2
 								frappe.logger().info(f"Document {doctype} found by sync_reference {sync_ref_value} as {remote_name_by_ref2}, will update")
-							else:
-								doc_exists = False
-								frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
 						else:
 							doc_exists = False
 							frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
+				else:
+					doc_exists = False
+					frappe.logger().info(f"Creating new document {doctype} with name {current_doc_name}")
 		
 		# Create or update document
 		action = None  # Initialize action variable
@@ -1776,9 +1776,9 @@ def sync_document_to_remote(
 							"message": f"{doctype} already exists on remote with same sync_reference. Skipping sync (these doctypes are never updated).",
 							"action": "skipped"
 						}
-					else:
+						else:
 						# Other duplicate error - return error
-						frappe.log_error(
+							frappe.log_error(
 							f"Failed to create {doctype} {attempted_name} on remote - duplicate entry error",
 							f"Failed to create {doctype} {attempted_name} on remote. Document is synced without name field, but duplicate entry error occurred.\n"
 							f"Error: {error_msg}\n"
