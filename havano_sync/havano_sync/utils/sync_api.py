@@ -4,7 +4,8 @@
 import frappe
 import requests
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class DocumentNotFoundError(Exception):
@@ -692,4 +693,91 @@ class SyncAPI:
 		except Exception as e:
 			error_msg = f"Failed to run migration: {str(e)}"
 			return False, error_msg
+	
+	def batch_create_documents(self, documents: List[Dict[str, Any]], max_workers: int = 20) -> List[Dict[str, Any]]:
+		"""
+		Create multiple documents in parallel using batch processing
+		
+		Args:
+			documents: List of dicts with keys: doctype, doc (document data), ignore_validate, ignore_permissions
+			max_workers: Maximum number of parallel requests (default: 20)
+		
+		Returns:
+			List of results, one per document
+		"""
+		results = []
+		
+		def create_single(doc_info):
+			try:
+				result = self.create_document(
+					doctype=doc_info['doctype'],
+					doc=doc_info['doc'],
+					ignore_validate=doc_info.get('ignore_validate', False),
+					ignore_permissions=doc_info.get('ignore_permissions', False)
+				)
+				return {
+					'status': 'success',
+					'doctype': doc_info['doctype'],
+					'name': doc_info.get('name'),
+					'result': result
+				}
+			except Exception as e:
+				return {
+					'status': 'error',
+					'doctype': doc_info['doctype'],
+					'name': doc_info.get('name'),
+					'error': str(e)
+				}
+		
+		# Use ThreadPoolExecutor for parallel requests
+		with ThreadPoolExecutor(max_workers=max_workers) as executor:
+			future_to_doc = {executor.submit(create_single, doc_info): doc_info for doc_info in documents}
+			
+			for future in as_completed(future_to_doc):
+				results.append(future.result())
+		
+		return results
+	
+	def batch_update_documents(self, documents: List[Dict[str, Any]], max_workers: int = 20) -> List[Dict[str, Any]]:
+		"""
+		Update multiple documents in parallel using batch processing
+		
+		Args:
+			documents: List of dicts with keys: doctype, name, doc (document data)
+			max_workers: Maximum number of parallel requests (default: 20)
+		
+		Returns:
+			List of results, one per document
+		"""
+		results = []
+		
+		def update_single(doc_info):
+			try:
+				result = self.update_document(
+					doctype=doc_info['doctype'],
+					name=doc_info['name'],
+					doc=doc_info['doc']
+				)
+				return {
+					'status': 'success',
+					'doctype': doc_info['doctype'],
+					'name': doc_info['name'],
+					'result': result
+				}
+			except Exception as e:
+				return {
+					'status': 'error',
+					'doctype': doc_info['doctype'],
+					'name': doc_info['name'],
+					'error': str(e)
+				}
+		
+		# Use ThreadPoolExecutor for parallel requests
+		with ThreadPoolExecutor(max_workers=max_workers) as executor:
+			future_to_doc = {executor.submit(update_single, doc_info): doc_info for doc_info in documents}
+			
+			for future in as_completed(future_to_doc):
+				results.append(future.result())
+		
+		return results
 

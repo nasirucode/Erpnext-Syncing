@@ -5,8 +5,9 @@ import frappe
 import json
 import time
 import requests
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from frappe.utils import cint
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from havano_sync.havano_sync.utils.sync_api import SyncAPI, DocumentNotFoundError, DuplicateEntryError
 from havano_sync.havano_sync.tasks.utils import (
     get_sync_settings,
@@ -720,7 +721,8 @@ def sync_document_to_remote(
 	force_create: bool = False,
 	sync_method: str = "Auto",
 	settings: Any = None,
-	skip_naming_series_check: bool = False
+	skip_naming_series_check: bool = False,
+	skip_quick_checks: bool = False
 ) -> Dict[str, Any]:
 	"""
 	Sync a document to the remote instance
@@ -728,38 +730,40 @@ def sync_document_to_remote(
 	start_time = time.time()
 	
 	try:
-		# Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
-		exempted_doctypes = {
-			'User', 'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
-			'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
-			'Email Queue', 'Email Queue Recipient', 'Notification Log',
-			'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
-			'Route History', 'Webform', 'Access Log', 'Portal Settings'
-		}
-		
-		if doctype in exempted_doctypes:
-			return {
-				"status": "skipped",
-				"message": f"{doctype} doctype is exempted from syncing",
-				"doctype": doctype,
-				"name": name
+		# Skip quick checks if already done in batch processing
+		if not skip_quick_checks:
+			# Exempted doctypes that should never be synced (auto-generated, ledger entries, etc.)
+			exempted_doctypes = {
+				'User', 'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+				'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+				'Email Queue', 'Email Queue Recipient', 'Notification Log',
+				'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+				'Route History', 'Webform', 'Access Log', 'Portal Settings'
 			}
-		
-		# Check sync_status - skip if already synced or fetched (avoid duplicates)
-		if settings:
-			from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
-			# Ensure field exists for all syncable doctypes
-			if should_sync_doctype(doctype, settings, direction="send"):
-				ensure_sync_status_field_exists(doctype)
-				# Check if already synced or fetched
-				if has_sync_status(doctype, name):
-					sync_status = frappe.db.get_value(doctype, name, 'sync_status')
-					return {
-						"status": "skipped",
-						"message": f"Document {doctype} {name} already has sync_status='{sync_status}', skipping to avoid duplicate",
-				"doctype": doctype,
-				"name": name
-			}
+			
+			if doctype in exempted_doctypes:
+				return {
+					"status": "skipped",
+					"message": f"{doctype} doctype is exempted from syncing",
+					"doctype": doctype,
+					"name": name
+				}
+			
+			# Check sync_status - skip if already synced or fetched (avoid duplicates)
+			if settings:
+				from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists, has_sync_status, should_sync_doctype
+				# Ensure field exists for all syncable doctypes
+				if should_sync_doctype(doctype, settings, direction="send"):
+					ensure_sync_status_field_exists(doctype)
+					# Check if already synced or fetched
+					if has_sync_status(doctype, name):
+						sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+						return {
+							"status": "skipped",
+							"message": f"Document {doctype} {name} already has sync_status='{sync_status}', skipping to avoid duplicate",
+							"doctype": doctype,
+							"name": name
+						}
 		
 		# Get decrypted API secret if not provided
 		if not api_secret and settings:
@@ -2722,4 +2726,196 @@ def _rename_single_remote_document(doctype: str, remote_name: str, sync_referenc
 			f"[RENAME_REMOTE] Error renaming remote {doctype}",
 			f"[RENAME_REMOTE] Error renaming remote {doctype} {remote_name}: {str(e)}\nTraceback: {frappe.get_traceback()}"
 		)
+
+
+def sync_batch_documents_to_remote(
+	documents: List[Dict[str, Any]],
+	target_url: str,
+	api_key: str,
+	api_secret: str = None,
+	settings: Any = None,
+	sync_method: str = "Batch",
+	batch_size: int = 20
+) -> Dict[str, Any]:
+	"""
+	Sync multiple documents to remote in batches for faster processing
+	
+	Args:
+		documents: List of dicts with keys: doctype, name
+		target_url: Remote server URL
+		api_key: Admin API Key
+		api_secret: Admin API Secret (will be decrypted if not provided)
+		settings: Havano Sync Settings
+		sync_method: Method used for sync (default: "Batch")
+		batch_size: Number of documents to process in parallel (default: 20)
+	
+	Returns:
+		Dict with status, results, and statistics
+	"""
+	start_time = time.time()
+	
+	if not documents:
+		return {
+			"status": "skipped",
+			"message": "No documents to sync",
+			"results": []
+		}
+	
+	try:
+		# Get decrypted API secret if not provided
+		if not api_secret and settings:
+			api_secret = get_decrypted_api_secret(settings)
+		elif not api_secret:
+			if not settings:
+				settings = get_sync_settings()
+			api_secret = get_decrypted_api_secret(settings)
+		
+		if not api_secret:
+			raise ValueError("API Secret is not configured or could not be decrypted")
+		
+		# Initialize API client
+		api_client = SyncAPI(target_url, api_key, api_secret)
+		
+		# Prepare documents for batch sync (skip validation checks that can be done once)
+		prepared_docs = []
+		skipped = []
+		
+		# Quick validation pass - filter out exempted doctypes and already synced
+		exempted_doctypes = {
+			'User', 'GL Entry', 'Stock Ledger Entry', 'Payment Ledger Entry', 'Repost Payment Ledger',
+			'Error Log', 'Activity Log', 'Comment', 'Version', 'Communication',
+			'Email Queue', 'Email Queue Recipient', 'Notification Log',
+			'Scheduled Job Log', 'Scheduled Job Type', 'DocType',
+			'Route History', 'Webform', 'Access Log', 'Portal Settings'
+		}
+		
+		for doc_info in documents:
+			doctype = doc_info.get('doctype')
+			name = doc_info.get('name')
+			
+			if not doctype or not name:
+				skipped.append({
+					"doctype": doctype,
+					"name": name,
+					"status": "skipped",
+					"message": "Missing doctype or name"
+				})
+				continue
+			
+			# Skip exempted doctypes
+			if doctype in exempted_doctypes:
+				skipped.append({
+					"doctype": doctype,
+					"name": name,
+					"status": "skipped",
+					"message": f"{doctype} doctype is exempted from syncing"
+				})
+				continue
+			
+			# Quick check: skip if sync_type is Remote (from database, faster than loading doc)
+			if frappe.db.has_column(doctype, 'sync_type'):
+				db_sync_type = frappe.db.get_value(doctype, name, 'sync_type')
+				if db_sync_type == "Remote":
+					skipped.append({
+						"doctype": doctype,
+						"name": name,
+						"status": "skipped",
+						"message": f"Document has sync_type='Remote' and should not be synced to remote"
+					})
+					continue
+			
+			# Check sync_status - skip if already synced
+			if settings and frappe.db.has_column(doctype, 'sync_status'):
+				from havano_sync.havano_sync.tasks.utils import has_sync_status
+				if has_sync_status(doctype, name):
+					sync_status = frappe.db.get_value(doctype, name, 'sync_status')
+					if sync_status and sync_status not in ('Pending', '', None):
+						skipped.append({
+							"doctype": doctype,
+							"name": name,
+							"status": "skipped",
+							"message": f"Document already has sync_status='{sync_status}'"
+						})
+						continue
+			
+			prepared_docs.append(doc_info)
+		
+		if not prepared_docs:
+			return {
+				"status": "completed",
+				"message": "All documents were skipped",
+				"results": skipped,
+				"skipped": len(skipped),
+				"synced": 0
+			}
+		
+		# Process documents in batches
+		results = []
+		total_batches = (len(prepared_docs) + batch_size - 1) // batch_size
+		
+		for batch_idx in range(0, len(prepared_docs), batch_size):
+			batch = prepared_docs[batch_idx:batch_idx + batch_size]
+			batch_num = (batch_idx // batch_size) + 1
+			
+			# Process batch in parallel
+			def sync_single_doc(doc_info):
+				try:
+					# Use the existing sync function but with minimal checks
+					result = sync_document_to_remote(
+						doctype=doc_info['doctype'],
+						name=doc_info['name'],
+						target_url=target_url,
+						api_key=api_key,
+						api_secret=api_secret,
+						force_create=True,
+						sync_method=sync_method,
+						settings=settings,
+						skip_naming_series_check=True,  # Skip for batch processing
+						skip_quick_checks=True  # Skip checks already done in batch
+					)
+					return result
+				except Exception as e:
+					return {
+						"status": "error",
+						"doctype": doc_info.get('doctype'),
+						"name": doc_info.get('name'),
+						"message": str(e)
+					}
+			
+			# Process batch with ThreadPoolExecutor
+			with ThreadPoolExecutor(max_workers=min(batch_size, len(batch))) as executor:
+				future_to_doc = {executor.submit(sync_single_doc, doc_info): doc_info for doc_info in batch}
+				
+				for future in as_completed(future_to_doc):
+					result = future.result()
+					results.append(result)
+		
+		# Combine results
+		all_results = results + skipped
+		successful = [r for r in all_results if r.get('status') == 'success']
+		errors = [r for r in all_results if r.get('status') == 'error']
+		
+		duration = time.time() - start_time
+		
+		return {
+			"status": "completed",
+			"message": f"Batch sync completed: {len(successful)} successful, {len(errors)} errors, {len(skipped)} skipped",
+			"results": all_results,
+			"successful": len(successful),
+			"errors": len(errors),
+			"skipped": len(skipped),
+			"duration_seconds": duration,
+			"docs_per_second": len(successful) / duration if duration > 0 else 0
+		}
+	
+	except Exception as e:
+		frappe.log_error(
+			"Batch Sync Failed",
+			f"Error in batch sync: {str(e)}\nTraceback: {frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": str(e),
+			"results": []
+		}
 

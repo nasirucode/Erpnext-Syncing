@@ -46,7 +46,8 @@ from havano_sync.havano_sync.tasks.sync_operations import (
     ensure_sync_fields_exist_on_remote,
     handle_link_validation_error,
     sync_linked_documents,
-    sync_document_to_remote
+    sync_document_to_remote,
+    sync_batch_documents_to_remote
 )
 
 # Import from document_events
@@ -210,10 +211,8 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 		
 		syncable_doctypes = get_syncable_doctypes(settings)
 		
-		results = {
-			"success": [],
-			"errors": []
-		}
+		# Collect all pending documents first for batch processing
+		all_pending_docs = []
 		
 		for syncable in syncable_doctypes:
 			doctype_name = syncable.doctypes
@@ -310,89 +309,109 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 					limit=1000
 				)
 			
+			# Collect documents for batch processing
 			for doc_info in docs:
-				try:
-					# Documents are already filtered to only include Pending or empty sync_status
-					result = sync_document_to_remote(
-						doctype_name,
-						doc_info.name,
-						settings.remote_url,
-						settings.admin_api_key,
-						api_secret=None,  # Will be decrypted in function
-						sync_method="Cron",
-						settings=settings,
-						skip_naming_series_check=True  # Skip naming series check for old documents
-					)
-					
-					if result["status"] == "success":
-						results["success"].append(result)
-					else:
-						# Log clear error message
-						error_msg = result.get("message", "Unknown error")
-						frappe.log_error(
-							title=f"Sync failed: {doctype_name} {doc_info.name}",
-							message=f"Document: {doctype_name} {doc_info.name}\n"
-									f"Error: {error_msg}\n"
-									f"Status: {result.get('status', 'unknown')}"
-						)
-						results["errors"].append({
-							"doctype": doctype_name,
-							"name": doc_info.name,
-							"error": error_msg,
-							"status": result.get("status", "error")
-						})
-				except Exception as e:
-					# Log clear error for exceptions
-					error_msg = str(e)
-					frappe.log_error(
-						title=f"Sync exception: {doctype_name} {doc_info.name}",
-						message=f"Document: {doctype_name} {doc_info.name}\n"
-								f"Exception: {error_msg}\n"
-								f"Traceback: {frappe.get_traceback()}"
-					)
-					results["errors"].append({
-						"doctype": doctype_name,
-						"name": doc_info.name,
-						"error": error_msg,
-						"status": "exception"
-					})
-					# Continue with next document
-					continue
+				all_pending_docs.append({
+					"doctype": doctype_name,
+					"name": doc_info.name
+				})
+		
+		# Process all documents in batches of 20
+		results = {
+			"success": [],
+			"errors": []
+		}
+		
+		# Track doctypes that had successful syncs for fetch trigger
+		successful_doctypes = set()
+		
+		if all_pending_docs:
+			# Process in batches of 20
+			batch_size = 20
+			total_docs_per_second = 0
+			batch_count = 0
 			
-			# After all sends for this doctype are complete, check if fetch is also enabled
-			# Only trigger fetch once per doctype, not after each document
-			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
-			if fetch_enabled and len(results["success"]) > 0:
-				try:
-					# Trigger fetch for this doctype (will skip documents that already exist locally)
-					frappe.logger().info(f"Fetch is enabled for {doctype_name}. Triggering fetch after successful sends.")
-					# Use enqueue to avoid blocking
-					frappe.enqueue(
-						"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
-						doctype=doctype_name,
-						queue="short",
-						timeout=300,
-						is_async=True
-					)
-				except Exception as fetch_error:
-					# Log but don't fail the sync operation
-					frappe.log_error(
-						title="Failed to trigger fetch after sends",
-						message=f"Error triggering fetch for {doctype_name} after successful sends: {str(fetch_error)}"
-					)
-					# Queue failed syncs
+			for i in range(0, len(all_pending_docs), batch_size):
+				batch = all_pending_docs[i:i + batch_size]
+				
+				# Use batch sync for faster processing
+				batch_result = sync_batch_documents_to_remote(
+					documents=batch,
+					target_url=settings.remote_url,
+					api_key=settings.admin_api_key,
+					api_secret=None,  # Will be decrypted in function
+					settings=settings,
+					sync_method="Cron",
+					batch_size=batch_size
+				)
+				
+				# Process batch results
+				if batch_result.get("status") == "completed":
+					for result in batch_result.get("results", []):
+						if result.get("status") == "success":
+							results["success"].append(result)
+							# Track successful doctypes for fetch trigger
+							if result.get("doctype"):
+								successful_doctypes.add(result.get("doctype"))
+						else:
+							results["errors"].append(result)
+							# Log errors (but less verbose for batch processing)
+							if result.get("status") == "error":
+								frappe.logger().warning(
+									f"Batch sync failed: {result.get('doctype')} {result.get('name')}: {result.get('message', 'Unknown error')}"
+								)
+					
+					# Track performance metrics
+					if batch_result.get("docs_per_second"):
+						total_docs_per_second += batch_result.get("docs_per_second", 0)
+						batch_count += 1
+				else:
+					# Batch failed, add all documents as errors
+					for doc_info in batch:
+						results["errors"].append({
+							"doctype": doc_info.get("doctype"),
+							"name": doc_info.get("name"),
+							"error": batch_result.get("message", "Batch sync failed"),
+							"status": "error"
+						})
+			
+			# Log batch processing statistics
+			avg_docs_per_second = total_docs_per_second / batch_count if batch_count > 0 else 0
+			if avg_docs_per_second > 0:
+				frappe.logger().info(
+					f"Batch sync completed: {len(results['success'])} successful, {len(results['errors'])} errors. "
+					f"Average speed: {avg_docs_per_second:.2f} docs/second"
+				)
+			
+		# Trigger fetch for doctypes that had successful syncs (only once per doctype)
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			
+			# Remove -Local suffix if present
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			# Only trigger fetch if this doctype had successful syncs and fetch is enabled
+			if doctype_name in successful_doctypes:
+				fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+				if fetch_enabled:
 					try:
-						doc = frappe.get_doc(doctype_name, doc_info.name)
-						doc_data = prepare_doc_for_sync(doc)
-						queue_sync_job(
+						# Trigger fetch for this doctype (will skip documents that already exist locally)
+						frappe.logger().info(f"Fetch is enabled for {doctype_name}. Triggering fetch after successful sends.")
+						# Use enqueue to avoid blocking
+						frappe.enqueue(
+							"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
 							doctype=doctype_name,
-							name=doc_info.name,
-							sync_type="Send",
-							document_data=doc_data,
-							priority=3
+							queue="short",
+							timeout=300,
+							is_async=True
 						)
-					except:
-						pass
+					except Exception as fetch_error:
+						# Log but don't fail the sync operation
+						frappe.log_error(
+							title="Failed to trigger fetch after sends",
+							message=f"Error triggering fetch for {doctype_name} after successful sends: {str(fetch_error)}"
+						)
 		
 		return {
 			"status": "completed",
