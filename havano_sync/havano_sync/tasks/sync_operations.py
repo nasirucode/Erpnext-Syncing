@@ -722,7 +722,8 @@ def sync_document_to_remote(
 	sync_method: str = "Auto",
 	settings: Any = None,
 	skip_naming_series_check: bool = False,
-	skip_quick_checks: bool = False
+	skip_quick_checks: bool = False,
+	fast_mode: bool = False
 ) -> Dict[str, Any]:
 	"""
 	Sync a document to the remote instance
@@ -987,8 +988,9 @@ def sync_document_to_remote(
 		# Sync linked documents first (dependencies) - for send direction
 		# This ensures all referenced documents exist on the remote server
 		# Skip if this is already a dependency sync (to avoid infinite recursion)
+		# In fast_mode, skip linked document syncing to speed up the process
 		link_field_mapping = {}
-		if not force_create:
+		if not force_create and not fast_mode:
 			try:
 				link_field_mapping = sync_linked_documents(
 					doc, api_client, settings, target_url, api_key, api_secret, direction="send"
@@ -1001,14 +1003,16 @@ def sync_document_to_remote(
 				)
 		
 		# Ensure sync fields exist on remote for syncable and compulsory doctypes
-		try:
-			ensure_sync_fields_exist_on_remote(doctype, api_client, settings)
-		except Exception as e:
-			# Log but don't fail - we'll try to sync anyway
-			frappe.log_error(
-				"Failed to ensure sync fields",
-				f"Could not ensure sync fields exist on remote for {doctype}: {str(e)}"
-			)
+		# In fast_mode, skip this check (assume fields already exist)
+		if not fast_mode:
+			try:
+				ensure_sync_fields_exist_on_remote(doctype, api_client, settings)
+			except Exception as e:
+				# Log but don't fail - we'll try to sync anyway
+				frappe.log_error(
+					"Failed to ensure sync fields",
+					f"Could not ensure sync fields exist on remote for {doctype}: {str(e)}"
+				)
 		
 		# Prepare document data
 		doc_data = prepare_doc_for_sync(doc)
@@ -1017,7 +1021,8 @@ def sync_document_to_remote(
 		# For Sales Invoice, ensure set_posting_time is set to 1
 		if doctype == 'Sales Invoice':
 			doc_data['set_posting_time'] = 1
-			frappe.logger().debug(f"Set set_posting_time=1 for Sales Invoice {actual_name}")
+			if not fast_mode:
+				frappe.logger().debug(f"Set set_posting_time=1 for Sales Invoice {actual_name}")
 		
 		# For all doctypes, ensure due_date >= posting_date to avoid validation errors
 		# Always set due_date = posting_date when due_date < posting_date
@@ -1068,8 +1073,9 @@ def sync_document_to_remote(
 		doctypes_exclude_name = {'Sales Invoice', 'Payment Entry', 'Quotation'}
 		if doctype not in doctypes_exclude_name:
 			doc_data['name'] = current_doc_name
-			frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name}")
-		else:
+			if not fast_mode:
+				frappe.logger().info(f"Prepared doc_data for {doctype}, name field set to: {current_doc_name}")
+		elif not fast_mode:
 			frappe.logger().info(f"Prepared doc_data for {doctype}, name field excluded (doctype syncs without name)")
 		
 		# For submittable doctypes, ensure docstatus is set correctly BEFORE setting sync fields
@@ -1080,17 +1086,20 @@ def sync_document_to_remote(
 			docstatus_value = getattr(doc, 'docstatus', None)
 			if docstatus_value is not None:
 				doc_data['docstatus'] = docstatus_value
-				frappe.logger().info(f"Set docstatus={docstatus_value} for submittable doctype {doctype} {current_doc_name} (from document object)")
+				if not fast_mode:
+					frappe.logger().info(f"Set docstatus={docstatus_value} for submittable doctype {doctype} {current_doc_name} (from document object)")
 			elif 'docstatus' in doc_data:
 				# Use docstatus from doc_data if document doesn't have it
-				frappe.logger().info(f"Using docstatus={doc_data['docstatus']} from doc_data for {doctype} {current_doc_name}")
+				if not fast_mode:
+					frappe.logger().info(f"Using docstatus={doc_data['docstatus']} from doc_data for {doctype} {current_doc_name}")
 			else:
 				# Default to draft (0) if not specified
 				doc_data['docstatus'] = 0
-				frappe.log_error(
-					f"docstatus not found for {doctype} {current_doc_name}",
-					f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)"
-				)
+				if not fast_mode:
+					frappe.log_error(
+						f"docstatus not found for {doctype} {current_doc_name}",
+						f"docstatus not found for {doctype} {current_doc_name}, defaulting to 0 (draft)"
+					)
 		else:
 			# For non-submittable doctypes, ensure docstatus is 0 or not set
 			if 'docstatus' in doc_data and doc_data.get('docstatus') == 1:
@@ -1115,24 +1124,36 @@ def sync_document_to_remote(
 					mapping_key = (link_doctype, link_value)
 					if mapping_key in link_field_mapping:
 						remote_name = link_field_mapping[mapping_key]
-						frappe.logger().info(f"Using link_field_mapping for {field.fieldname}: {link_value} -> {remote_name}")
+						if not fast_mode:
+							frappe.logger().info(f"Using link_field_mapping for {field.fieldname}: {link_value} -> {remote_name}")
 					else:
-						# Try to resolve using sync_reference
-						remote_name = resolve_remote_document_name_by_sync_reference(
-							api_client, link_doctype, link_value
-						)
-						if remote_name:
-							frappe.logger().info(f"Resolved {field.fieldname} using sync_reference: {link_value} -> {remote_name}")
-							# Store in mapping for future use
-							link_field_mapping[mapping_key] = remote_name
+						# In fast_mode, skip sync_reference resolution to speed up (assume link exists on remote)
+						if fast_mode:
+							# In fast mode, assume the link value is correct and exists on remote
+							remote_name = link_value
+						else:
+							# Try to resolve using sync_reference
+							remote_name = resolve_remote_document_name_by_sync_reference(
+								api_client, link_doctype, link_value
+							)
+							if remote_name:
+								if not fast_mode:
+									frappe.logger().info(f"Resolved {field.fieldname} using sync_reference: {link_value} -> {remote_name}")
+								# Store in mapping for future use
+								link_field_mapping[mapping_key] = remote_name
 					
 					if remote_name and remote_name != link_value:
 						doc_data[field.fieldname] = remote_name
-						frappe.logger().info(f"Updated link field {field.fieldname} from {link_value} to {remote_name} for {doctype} {name}")
+						if not fast_mode:
+							frappe.logger().info(f"Updated link field {field.fieldname} from {link_value} to {remote_name} for {doctype} {name}")
 					elif not remote_name:
 						# For critical links like Customer in Sales Invoice, ensure the document exists on remote
 						# If it doesn't exist, try to sync it or create a minimal version
-						if link_doctype == "Customer" and doctype in ("Sales Invoice", "Payment Entry", "Sales Order"):
+						# In fast_mode, skip customer existence check (assume it exists)
+						if fast_mode:
+							# In fast mode, just use the link value as-is
+							doc_data[field.fieldname] = link_value
+						elif link_doctype == "Customer" and doctype in ("Sales Invoice", "Payment Entry", "Sales Order"):
 							# Customer is critical for Sales Invoice - ensure it exists on remote
 							try:
 								# Check if customer exists on remote by name
@@ -1623,22 +1644,26 @@ def sync_document_to_remote(
 					try_create_with_docstatus_1 = True
 					# Keep docstatus=1 in doc_data to attempt direct creation
 					doc_data['docstatus'] = 1
-					frappe.logger().info(f"Attempting to create submittable document {doctype} {current_doc_name} directly with docstatus=1")
+					if not fast_mode:
+						frappe.logger().info(f"Attempting to create submittable document {doctype} {current_doc_name} directly with docstatus=1")
 				else:
 					# Keep docstatus as is (0 for draft)
-					frappe.logger().info(f"Creating submittable document {doctype} {current_doc_name} as draft (docstatus={original_docstatus})")
+					if not fast_mode:
+						frappe.logger().info(f"Creating submittable document {doctype} {current_doc_name} as draft (docstatus={original_docstatus})")
 			else:
 				# For non-submittable doctypes, ensure docstatus is 0
 				if 'docstatus' in doc_data and doc_data.get('docstatus') == 1:
 					# If docstatus is 1 but doctype is not submittable, set to 0
-					frappe.log_error(
-						f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable",
-						f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0."
-					)
+					if not fast_mode:
+						frappe.log_error(
+							f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable",
+							f"Document {doctype} {current_doc_name} has docstatus=1 but is not submittable. Setting to 0."
+						)
 					doc_data['docstatus'] = 0
 				elif 'docstatus' not in doc_data:
 					doc_data['docstatus'] = 0
-				frappe.logger().info(f"Creating document {doctype} with name {current_doc_name} on remote (actual_name was: {actual_name}, doc.name is: {doc.name if hasattr(doc, 'name') else 'N/A'})")
+				if not fast_mode:
+					frappe.logger().info(f"Creating document {doctype} with name {current_doc_name} on remote (actual_name was: {actual_name}, doc.name is: {doc.name if hasattr(doc, 'name') else 'N/A'})")
 			
 			try:
 				# For Sales Invoice, ensure set_posting_time is set to 1 before creating/updating
@@ -1652,10 +1677,12 @@ def sync_document_to_remote(
 				
 				if try_create_with_docstatus_1:
 					try:
-						frappe.logger().info(f"Attempting to create {doctype} {current_doc_name} directly with docstatus=1")
+						if not fast_mode:
+							frappe.logger().info(f"Attempting to create {doctype} {current_doc_name} directly with docstatus=1")
 						result = api_client.create_document(doctype, doc_data, ignore_validate=ignore_validate)
 						action = "created"
-						frappe.logger().info(f"Successfully created {doctype} {current_doc_name} directly with docstatus=1")
+						if not fast_mode:
+							frappe.logger().info(f"Successfully created {doctype} {current_doc_name} directly with docstatus=1")
 						# If successful, we don't need to submit
 						needs_submit = False
 					except DuplicateEntryError:
@@ -2853,42 +2880,91 @@ def sync_batch_documents_to_remote(
 		results = []
 		total_batches = (len(prepared_docs) + batch_size - 1) // batch_size
 		
-		for batch_idx in range(0, len(prepared_docs), batch_size):
-			batch = prepared_docs[batch_idx:batch_idx + batch_size]
-			batch_num = (batch_idx // batch_size) + 1
-			
-			# Process batch in parallel
-			def sync_single_doc(doc_info):
-				try:
-					# Use the existing sync function but with minimal checks
-					result = sync_document_to_remote(
-						doctype=doc_info['doctype'],
-						name=doc_info['name'],
-						target_url=target_url,
-						api_key=api_key,
-						api_secret=api_secret,
-						force_create=True,
-						sync_method=sync_method,
-						settings=settings,
-						skip_naming_series_check=True,  # Skip for batch processing
-						skip_quick_checks=True  # Skip checks already done in batch
-					)
-					return result
-				except Exception as e:
-					return {
-						"status": "error",
-						"doctype": doc_info.get('doctype'),
-						"name": doc_info.get('name'),
-						"message": str(e)
-					}
-			
-			# Process batch with ThreadPoolExecutor
-			with ThreadPoolExecutor(max_workers=min(batch_size, len(batch))) as executor:
-				future_to_doc = {executor.submit(sync_single_doc, doc_info): doc_info for doc_info in batch}
+		# For Sales Invoice, use larger batch size to achieve 20 per minute
+		# 20 invoices per minute = ~3 seconds per invoice, so we can process 20 in parallel
+		sales_invoice_docs = [d for d in prepared_docs if d.get('doctype') == 'Sales Invoice']
+		other_docs = [d for d in prepared_docs if d.get('doctype') != 'Sales Invoice']
+		
+		# Process Sales Invoices first with optimized batch size
+		if sales_invoice_docs:
+			for batch_idx in range(0, len(sales_invoice_docs), batch_size):
+				batch = sales_invoice_docs[batch_idx:batch_idx + batch_size]
 				
-				for future in as_completed(future_to_doc):
-					result = future.result()
-					results.append(result)
+				# Process batch in parallel
+				def sync_single_doc(doc_info):
+					try:
+						# Use fast_mode for Sales Invoice to achieve 20 invoices per minute
+						# Fast mode skips linked document syncing, customer checks, and reduces logging
+						is_sales_invoice = doc_info.get('doctype') == 'Sales Invoice'
+						
+						# Use the existing sync function but with minimal checks
+						result = sync_document_to_remote(
+							doctype=doc_info['doctype'],
+							name=doc_info['name'],
+							target_url=target_url,
+							api_key=api_key,
+							api_secret=api_secret,
+							force_create=True,
+							sync_method=sync_method,
+							settings=settings,
+							skip_naming_series_check=True,  # Skip for batch processing
+							skip_quick_checks=True,  # Skip checks already done in batch
+							fast_mode=is_sales_invoice  # Enable fast mode for Sales Invoice
+						)
+						return result
+					except Exception as e:
+						return {
+							"status": "error",
+							"doctype": doc_info.get('doctype'),
+							"name": doc_info.get('name'),
+							"message": str(e)
+						}
+				
+				# Process batch with ThreadPoolExecutor
+				with ThreadPoolExecutor(max_workers=min(batch_size, len(batch))) as executor:
+					future_to_doc = {executor.submit(sync_single_doc, doc_info): doc_info for doc_info in batch}
+					
+					for future in as_completed(future_to_doc):
+						result = future.result()
+						results.append(result)
+		
+		# Process other doctypes
+		if other_docs:
+			for batch_idx in range(0, len(other_docs), batch_size):
+				batch = other_docs[batch_idx:batch_idx + batch_size]
+				
+				# Process batch in parallel
+				def sync_single_doc(doc_info):
+					try:
+						# Use the existing sync function but with minimal checks
+						result = sync_document_to_remote(
+							doctype=doc_info['doctype'],
+							name=doc_info['name'],
+							target_url=target_url,
+							api_key=api_key,
+							api_secret=api_secret,
+							force_create=True,
+							sync_method=sync_method,
+							settings=settings,
+							skip_naming_series_check=True,  # Skip for batch processing
+							skip_quick_checks=True  # Skip checks already done in batch
+						)
+						return result
+					except Exception as e:
+						return {
+							"status": "error",
+							"doctype": doc_info.get('doctype'),
+							"name": doc_info.get('name'),
+							"message": str(e)
+						}
+				
+				# Process batch with ThreadPoolExecutor
+				with ThreadPoolExecutor(max_workers=min(batch_size, len(batch))) as executor:
+					future_to_doc = {executor.submit(sync_single_doc, doc_info): doc_info for doc_info in batch}
+					
+					for future in as_completed(future_to_doc):
+						result = future.result()
+						results.append(result)
 		
 		# Combine results
 		all_results = results + skipped
