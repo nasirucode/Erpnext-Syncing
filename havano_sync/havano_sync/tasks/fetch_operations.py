@@ -668,8 +668,16 @@ def fetch_document_from_remote(doctype: str, name: str):
 		doc_data['sync_type'] = "Remote"
 		
 		if is_compulsory or is_syncable:
-			# Set sync_reference to remote document name
-			doc_data['sync_reference'] = name
+			# For fetched documents, use the remote sync_reference if available, otherwise generate random
+			# Note: remote_doc is available in this scope from the function parameter
+			remote_sync_ref = remote_doc.get('sync_reference') if remote_doc else None
+			if remote_sync_ref:
+				doc_data['sync_reference'] = remote_sync_ref
+			else:
+				# Generate random sync_reference if remote doesn't have one
+				import random
+				import string
+				doc_data['sync_reference'] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
 		
 		# Ensure all fetched documents are committed before creating the main document
 		frappe.db.commit()
@@ -1197,60 +1205,73 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 							remote_item_code = remote_doc.get('item_code')
 							remote_price_list = remote_doc.get('price_list')
 							remote_price_list_rate = remote_doc.get('price_list_rate')
+						
+						if remote_item_code and remote_price_list:
+							# Check if local Item Price exists with same item_code and price_list
+							existing_item_price = frappe.db.get_value(
+								doctype_name,
+								{
+									"item_code": remote_item_code,
+									"price_list": remote_price_list
+								},
+								"name"
+							)
 							
-							if remote_item_code and remote_price_list:
-								# Check if local Item Price exists with same item_code and price_list
-								existing_item_price = frappe.db.get_value(
-									doctype_name,
-									{
-										"item_code": remote_item_code,
-										"price_list": remote_price_list
-									},
-									"name"
-								)
-								
-								if existing_item_price:
-									# Document exists - update price_list_rate to match remote
+							if existing_item_price:
+								# Document exists - update price_list_rate to match remote
+								try:
+									frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}. Updating price_list_rate to {remote_price_list_rate}.")
+									local_doc = frappe.get_doc(doctype_name, existing_item_price)
+									
+									# Update price_list_rate
+									old_rate = local_doc.price_list_rate
+									local_doc.price_list_rate = remote_price_list_rate
+									
+									# Update sync fields
+									local_doc.sync_type = "Remote"
+									# Check if doctype is syncable or compulsory to set sync_reference
+									auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+									is_compulsory = doctype_name in auto_sync_doctypes
+									is_syncable = should_sync_doctype(doctype_name, settings, direction="send")
+									if is_compulsory or is_syncable:
+										# For fetched documents, use the remote sync_reference if available
+										# or generate a random one if not
+										remote_sync_ref = remote_doc.get('sync_reference')
+										if remote_sync_ref:
+											local_doc.sync_reference = remote_sync_ref
+										else:
+											# Generate random sync_reference if remote doesn't have one
+											import random
+											import string
+											local_doc.sync_reference = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+									
+									# Save the updated document
+									local_doc.save(ignore_permissions=True)
+									frappe.db.commit()
+									
+									frappe.logger().info(f"[Item Price Update] Updated price_list_rate from {old_rate} to {remote_price_list_rate} for {doctype_name} {existing_item_price}")
+									
+									# Set sync_status to "Fetched"
 									try:
-										frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}. Updating price_list_rate to {remote_price_list_rate}.")
-										local_doc = frappe.get_doc(doctype_name, existing_item_price)
-										
-										# Update price_list_rate
-										old_rate = local_doc.price_list_rate
-										local_doc.price_list_rate = remote_price_list_rate
-										
-										# Update sync fields
-										local_doc.sync_type = "Remote"
-										if is_compulsory or is_syncable:
-											local_doc.sync_reference = doc_name
-										
-										# Save the updated document
-										local_doc.save(ignore_permissions=True)
-										frappe.db.commit()
-										
-										frappe.logger().info(f"[Item Price Update] Updated price_list_rate from {old_rate} to {remote_price_list_rate} for {doctype_name} {existing_item_price}")
-										
-										# Set sync_status to "Fetched"
-										try:
-											from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
-											ensure_sync_status_field_exists(doctype_name)
-											if frappe.db.has_column(doctype_name, 'sync_status'):
-												frappe.db.set_value(doctype_name, existing_item_price, 'sync_status', 'Fetched', update_modified=False)
-												frappe.db.commit()
-												frappe.logger().info(f"[Item Price Update] Set sync_status='Fetched' for {doctype_name} {existing_item_price}")
-										except Exception as sync_status_error:
-											frappe.log_error(
-												title="Failed to set sync_status on updated document",
-												message=f"Could not set sync_status='Fetched' on {doctype_name} {existing_item_price}: {str(sync_status_error)}"
-											)
-										
-										results["success"].append({
-											"doctype": doctype_name,
-											"name": existing_item_price,
-											"message": f"Document updated successfully (matched by item_code, price_list). Updated price_list_rate from {old_rate} to {remote_price_list_rate}"
-										})
-										continue
-									except Exception as update_error:
+										from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
+										ensure_sync_status_field_exists(doctype_name)
+										if frappe.db.has_column(doctype_name, 'sync_status'):
+											frappe.db.set_value(doctype_name, existing_item_price, 'sync_status', 'Fetched', update_modified=False)
+											frappe.db.commit()
+											frappe.logger().info(f"[Item Price Update] Set sync_status='Fetched' for {doctype_name} {existing_item_price}")
+									except Exception as sync_status_error:
+										frappe.log_error(
+											title="Failed to set sync_status on updated document",
+											message=f"Could not set sync_status='Fetched' on {doctype_name} {existing_item_price}: {str(sync_status_error)}"
+										)
+									
+									results["success"].append({
+										"doctype": doctype_name,
+										"name": existing_item_price,
+										"message": f"Document updated successfully (matched by item_code, price_list). Updated price_list_rate from {old_rate} to {remote_price_list_rate}"
+									})
+									continue
+								except Exception as update_error:
 										frappe.log_error(
 											title=f"Failed to update {doctype_name} {existing_item_price}",
 											message=f"Error updating {doctype_name} {existing_item_price}: {str(update_error)}\n{frappe.get_traceback()}"
@@ -1366,7 +1387,15 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 								)
 							
 							# Set sync_reference (sync_type already set above)
-							doc_data['sync_reference'] = doc_name
+							# For fetched documents, use the remote sync_reference if available, otherwise generate random
+							remote_sync_ref = remote_doc.get('sync_reference')
+							if remote_sync_ref:
+								doc_data['sync_reference'] = remote_sync_ref
+							else:
+								# Generate random sync_reference if remote doesn't have one
+								import random
+								import string
+								doc_data['sync_reference'] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
 						
 						# Check if document already exists before creating
 						# For Item Price, we already checked by item_code and price_list above

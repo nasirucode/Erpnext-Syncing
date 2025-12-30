@@ -43,6 +43,53 @@ def trigger_sync_single(doctype: str, name: str):
 
 
 @frappe.whitelist()
+def resync_pending_document(doctype: str, name: str):
+	"""
+	API endpoint to resync a pending document
+	Sets sync_status to 'Pending' and triggers sync
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.resync_pending_document
+		Body: {"doctype": "Sales Invoice", "name": "ACC-SINV-2025-00001"}
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
+		
+		# Ensure sync_status field exists
+		ensure_sync_status_field_exists(doctype)
+		
+		# Check if document exists
+		if not frappe.db.exists(doctype, name):
+			return {
+				"status": "error",
+				"message": f"Document {doctype} {name} does not exist"
+			}
+		
+		# Set sync_status to 'Pending' to mark it for resync
+		if frappe.db.has_column(doctype, 'sync_status'):
+			frappe.db.set_value(doctype, name, 'sync_status', 'Pending', update_modified=False)
+			frappe.db.commit()
+		
+		# Trigger sync for this document
+		result = sync_single_document(doctype, name)
+		
+		return {
+			"status": "success",
+			"message": f"Resync triggered for {doctype} {name}",
+			"sync_result": result
+		}
+	except Exception as e:
+		frappe.log_error(
+			title="Resync Pending Document Failed",
+			message=f"Error resyncing {doctype} {name}: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to resync document: {str(e)}"
+		}
+
+
+@frappe.whitelist()
 def test_connection(remote_url=None, admin_api_key=None, admin_api_secret=None, run_migration=False):
 	"""
 	API endpoint to test connection to remote server

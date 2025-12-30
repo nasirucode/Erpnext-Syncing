@@ -221,154 +221,24 @@ def process_single_queued_sync(
 		
 		# Verify document exists before syncing
 		# Check this BEFORE updating queue status to avoid issues
-		# Handle case where document might have been renamed with -Local suffix or naming series
+		# Documents are no longer renamed, so just check by name
 		actual_name = name
 		if not frappe.db.exists(doctype, name):
-			# For Sales Invoice and Payment Entry with naming series, try to find renamed document
-			if doctype in ("Sales Invoice", "Payment Entry"):
-				settings = get_sync_settings()
-				if settings:
-					naming_series_to_check = None
-					if doctype == "Payment Entry" and hasattr(settings, 'payment_entry_naming_series') and settings.payment_entry_naming_series:
-						naming_series_to_check = settings.payment_entry_naming_series
-					elif doctype == "Sales Invoice" and hasattr(settings, 'sales_invoice_naming_series') and settings.sales_invoice_naming_series:
-						naming_series_to_check = settings.sales_invoice_naming_series
-					
-					if naming_series_to_check:
-						# Try to find renamed document by pattern matching
-						import re
-						pattern_match = re.match(r'^([A-Z0-9\-]+)', naming_series_to_check)
-						if pattern_match:
-							prefix = pattern_match.group(1).rstrip('-')
-							table_name = f"tab{doctype}"
-							recent_docs = frappe.db.sql(f"""
-								SELECT name FROM `{table_name}`
-								WHERE name LIKE %s
-								AND name != %s
-								AND sync_type = 'Local'
-								AND creation >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-								ORDER BY creation DESC
-								LIMIT 1
-							""", (prefix + '%', name), as_dict=True)
-							
-							if recent_docs:
-								actual_name = recent_docs[0].name
-								# Verify the renamed document exists and has sync_type=Local
-								if frappe.db.exists(doctype, actual_name):
-									renamed_sync_type = frappe.db.get_value(doctype, actual_name, 'sync_type') if frappe.db.has_column(doctype, 'sync_type') else None
-									if renamed_sync_type == "Remote":
-										frappe.log_error(
-											f"[QUEUE] Found renamed document {doctype} {actual_name} but sync_type='Remote'",
-											f"[QUEUE] Found renamed document {doctype} {actual_name} but it has sync_type='Remote'. Cannot sync."
-										)
-										error_msg = f"Document {doctype} {name} was renamed to {actual_name} but it has sync_type='Remote' and should not be synced"
-										frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-											"status": "Failed",
-											"error_message": error_msg
-										}, update_modified=False)
-										frappe.db.commit()
-										return {"status": "error", "message": error_msg}
-									# Update the queue document with the correct name
-									frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-										"document_name": actual_name
-									}, update_modified=False)
-									frappe.db.commit()
-								else:
-									frappe.log_error(
-										f"[QUEUE] Renamed document {doctype} {actual_name} from search does not exist",
-										f"[QUEUE] Renamed document {doctype} {actual_name} from search does not exist"
-									)
-									# Continue with search result anyway - might be a timing issue
-							else:
-								# Could not find renamed document, fall back to -Local check
-								if not name.endswith("-Local"):
-									local_name = f"{name}-Local"
-									if frappe.db.exists(doctype, local_name):
-										actual_name = local_name
-										frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {actual_name}")
-										# Update the queue document with the correct name
-										frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-											"document_name": actual_name
-										}, update_modified=False)
-										frappe.db.commit()
-									else:
-										error_msg = f"Document {doctype} {name} does not exist (also checked {local_name} and renamed versions)"
-										frappe.log_error(
-											"Sync Failed: Document not found",
-											error_msg
-										)
-										# Use db.set_value to update queue status without triggering validation
-										frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-											"status": "Failed",
-											"error_message": error_msg
-										}, update_modified=False)
-										frappe.db.commit()
-										return {"status": "error", "message": error_msg}
-								else:
-									error_msg = f"Document {doctype} {name} does not exist (also checked renamed versions)"
-									frappe.log_error(
-										"Sync Failed: Document not found",
-										error_msg
-									)
-									# Use db.set_value to update queue status without triggering validation
-									frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-										"status": "Failed",
-										"error_message": error_msg
-									}, update_modified=False)
-									frappe.db.commit()
-									return {"status": "error", "message": error_msg}
-						else:
-							# Could not parse naming series, fall back to -Local check
-							if not name.endswith("-Local"):
-								local_name = f"{name}-Local"
-								if frappe.db.exists(doctype, local_name):
-									actual_name = local_name
-									frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {actual_name}")
-									# Update the queue document with the correct name
-									frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-										"document_name": actual_name
-									}, update_modified=False)
-									frappe.db.commit()
-								else:
-									error_msg = f"Document {doctype} {name} does not exist (also checked {local_name})"
-									frappe.log_error(
-										"Sync Failed: Document not found",
-										error_msg
-									)
-									# Use db.set_value to update queue status without triggering validation
-									frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-										"status": "Failed",
-										"error_message": error_msg
-									}, update_modified=False)
-									frappe.db.commit()
-									return {"status": "error", "message": error_msg}
-			else:
-				# For other doctypes, check if document exists with -Local suffix
-				if not name.endswith("-Local"):
-					local_name = f"{name}-Local"
-					if frappe.db.exists(doctype, local_name):
-						actual_name = local_name
-						frappe.logger().info(f"Document {doctype} {name} not found, using renamed name {actual_name}")
-						# Update the queue document with the correct name
-						frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-							"document_name": actual_name
-						}, update_modified=False)
-						frappe.db.commit()
-					else:
-						error_msg = f"Document {doctype} {name} does not exist (also checked {local_name})"
-						frappe.log_error(
-							"Sync Failed: Document not found",
-							error_msg
-						)
-						# Use db.set_value to update queue status without triggering validation
-						frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
-							"status": "Failed",
-							"error_message": error_msg
-						}, update_modified=False)
-						frappe.db.commit()
-						return {"status": "error", "message": error_msg}
-		else:
-			actual_name = name
+			error_msg = f"Document {doctype} {name} does not exist"
+			frappe.log_error(
+				"Sync Failed: Document not found",
+				error_msg
+			)
+			# Use db.set_value to update queue status without triggering validation
+			frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
+				"status": "Failed",
+				"error_message": error_msg
+			}, update_modified=False)
+			frappe.db.commit()
+			return {"status": "error", "message": error_msg}
+		
+		# Document exists, continue with sync
+		actual_name = name
 		
 		# Update status to Processing using db.set_value to avoid validation issues
 		frappe.db.set_value("Havano Sync Queue", queue_doc_name, {
@@ -379,9 +249,7 @@ def process_single_queued_sync(
 		
 		# Verify document exists and can be loaded
 		try:
-			
 			# Get document to verify it can be loaded
-			# Use actual_name which may have been updated to include -Local suffix
 			doc = frappe.get_doc(doctype, actual_name)
 			
 			# Get document data if not provided
@@ -417,6 +285,9 @@ def process_single_queued_sync(
 		# Import here to avoid circular dependency
 		from havano_sync.havano_sync.tasks.sync_operations import sync_document_to_remote
 		
+		# For Sales Invoice, Payment Entry, and Quotation, skip naming series check since renaming was removed
+		skip_naming_check = doctype in ("Sales Invoice", "Payment Entry", "Quotation")
+		
 		result = sync_document_to_remote(
 			doctype=doctype,
 			name=actual_name,
@@ -425,7 +296,8 @@ def process_single_queued_sync(
 			api_secret=None,  # Will be decrypted in function
 			force_create=True,
 			sync_method="Queue",
-			settings=settings
+			settings=settings,
+			skip_naming_series_check=skip_naming_check
 		)
 		
 		# Update queue status based on result using db.set_value to avoid validation issues
@@ -618,6 +490,9 @@ def process_queued_syncs(limit: int = 50):
 				# Import here to avoid circular dependency
 				from havano_sync.havano_sync.tasks.sync_operations import sync_document_to_remote
 				
+				# For Sales Invoice, Payment Entry, and Quotation, skip naming series check since renaming was removed
+				skip_naming_check = job.doctype in ("Sales Invoice", "Payment Entry", "Quotation")
+				
 				# Try to sync using actual_name
 				result = sync_document_to_remote(
 					job.doctype,
@@ -627,7 +502,8 @@ def process_queued_syncs(limit: int = 50):
 					api_secret=None,  # Will be decrypted in function
 					force_create=True,
 					sync_method="Queue",
-					settings=settings
+					settings=settings,
+					skip_naming_series_check=skip_naming_check
 				)
 				
 				if result["status"] == "success":

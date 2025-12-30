@@ -43,8 +43,14 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Sales Invoice" : "/havano_sync/custom_scripts/sales_invoice.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_js = {
+	"Sales Invoice" : "/havano_sync/custom_scripts/sales_invoice.js",
+	"Payment Entry" : "/havano_sync/custom_scripts/payment_entry.js"
+}
+doctype_list_js = {
+	"Sales Invoice" : "/havano_sync/custom_scripts/sales_invoice_list.js",
+	"Payment Entry" : "/havano_sync/custom_scripts/payment_entry_list.js"
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -139,6 +145,7 @@ after_install = "havano_sync.install.after_install"
 
 doc_events = {
 	"*": {
+		"validate": "havano_sync.havano_sync.tasks.document_events.set_sync_reference_on_validate",
 		"on_submit": "havano_sync.havano_sync.tasks.sync.sync_document_on_submit",
 		"on_update": "havano_sync.havano_sync.tasks.sync.sync_document_on_update"
 	},
@@ -155,6 +162,9 @@ doc_events = {
 		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	},
 	"Sales Order": {
+		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
+	},
+	"Quotation": {
 		"after_insert": "havano_sync.havano_sync.tasks.sync.sync_document_on_create"
 	}
 }

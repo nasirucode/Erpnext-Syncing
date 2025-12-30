@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 def prepare_doc_for_sync(doc) -> Dict[str, Any]:
-	"""Prepare document data for syncing (remove internal fields and convert date/datetime)"""
+	"""Prepare document data for syncing (remove internal fields, empty values, and convert date/datetime)"""
 	doc_dict = doc.as_dict()
 	
 	# Remove internal fields that shouldn't be synced
@@ -29,55 +29,148 @@ def prepare_doc_for_sync(doc) -> Dict[str, Any]:
 	# Doctypes that should not include 'name' and 'naming_series' fields in sync data
 	doctypes_exclude_name = {'Sales Invoice', 'Payment Entry', 'Quotation'}
 	
-	# Also exclude child table internal fields
-	for key in list(doc_dict.keys()):
-		if key in exclude_fields or key.startswith('_'):
-			doc_dict.pop(key, None)
-		# Remove 'name' and 'naming_series' fields for specific doctypes
-		elif key in ('name', 'naming_series') and doc.doctype in doctypes_exclude_name:
-			doc_dict.pop(key, None)
-		# Convert date/datetime/timedelta objects to ISO format strings for JSON serialization
-		elif isinstance(doc_dict[key], (date, datetime)):
-			doc_dict[key] = doc_dict[key].isoformat()
-		elif isinstance(doc_dict[key], timedelta):
+	# Fields to exclude for specific doctypes
+	# For Payment Entry, exclude fields that link to Sales Invoice
+	excluded_fields_by_doctype = {}
+	if doc.doctype == 'Payment Entry':
+		excluded_fields_by_doctype['Payment Entry'] = {
+			'reference_name',   # Exclude when reference_doctype is Sales Invoice
+			'reference_doctype', # Exclude when it's Sales Invoice
+			'reference_no',     # Exclude reference number
+			'sales_invoice',    # Direct Sales Invoice link if exists
+			'against_invoice',  # Against invoice field if exists
+		}
+	
+	# Child tables to exclude for specific doctypes
+	# For Payment Entry, exclude Payment References and References child tables
+	excluded_child_tables = set()
+	if doc.doctype == 'Payment Entry':
+		# Exclude Payment References and References child tables (case-insensitive)
+		excluded_child_tables.add('payment_references')
+		excluded_child_tables.add('payment references')
+		excluded_child_tables.add('references')
+		excluded_child_tables.add('reference')
+	
+	# Helper function to check if a value is empty
+	def is_empty_value(value):
+		"""Check if a value should be considered empty and skipped"""
+		if value is None:
+			return True
+		if isinstance(value, str) and value.strip() == '':
+			return True
+		if isinstance(value, (list, dict)) and len(value) == 0:
+			return True
+		return False
+	
+	# Helper function to convert datetime/date/timedelta to JSON-serializable format
+	def convert_datetime_value(value):
+		"""Convert datetime/date/timedelta objects to JSON-serializable strings"""
+		if isinstance(value, datetime):
+			return value.isoformat()
+		elif isinstance(value, date):
+			return value.isoformat()
+		elif isinstance(value, timedelta):
 			# Convert timedelta to HH:MM:SS format (Frappe time format)
-			total_seconds = int(doc_dict[key].total_seconds())
+			total_seconds = int(value.total_seconds())
 			hours = total_seconds // 3600
 			minutes = (total_seconds % 3600) // 60
 			seconds = total_seconds % 60
-			doc_dict[key] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+			return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+		elif isinstance(value, list):
+			# Recursively convert datetime objects in lists
+			return [convert_datetime_value(item) for item in value]
+		elif isinstance(value, dict):
+			# Recursively convert datetime objects in dictionaries
+			return {k: convert_datetime_value(v) for k, v in value.items()}
+		else:
+			return value
+	
+	# Process main document fields - only include fields with values
+	cleaned_dict = {}
+	for key in doc_dict.keys():
+		# Skip internal fields
+		if key in exclude_fields or key.startswith('_'):
+			continue
+		# Remove 'name' and 'naming_series' fields for specific doctypes
+		if key in ('name', 'naming_series') and doc.doctype in doctypes_exclude_name:
+			continue
+		
+		# Skip excluded fields for specific doctypes
+		if doc.doctype in excluded_fields_by_doctype:
+			excluded_fields = excluded_fields_by_doctype[doc.doctype]
+			if key in excluded_fields:
+				# For Payment Entry, exclude Sales Invoice related fields
+				if doc.doctype == 'Payment Entry':
+					# Check reference_doctype first to determine if we should exclude reference fields
+					reference_doctype_value = doc_dict.get('reference_doctype', '')
+					
+					if key == 'reference_name':
+						# Only exclude reference_name if reference_doctype is Sales Invoice
+						if reference_doctype_value == 'Sales Invoice':
+							continue  # Skip this field
+					elif key == 'reference_doctype':
+						# Exclude reference_doctype if it's Sales Invoice
+						if doc_dict.get(key) == 'Sales Invoice':
+							continue  # Skip this field
+					elif key == 'reference_no':
+						# Exclude reference_no if reference_doctype is Sales Invoice
+						if reference_doctype_value == 'Sales Invoice':
+							continue  # Skip this field
+					else:
+						# Skip other excluded fields (sales_invoice, against_invoice) unconditionally
+						continue
+		
+		value = doc_dict[key]
+		
+		# Skip empty values (None, empty strings, empty lists, empty dicts)
+		if is_empty_value(value):
+			continue
+		
+		# Convert date/datetime/timedelta objects to JSON-serializable format
+		# This handles nested structures (lists, dicts) that may contain datetime objects
+		cleaned_dict[key] = convert_datetime_value(value)
 	
 	# Handle child tables - they are already in the dict as lists
 	# Just need to clean up internal fields from each child row
 	for field in doc.meta.fields:
 		if field.fieldtype == "Table" and field.fieldname in doc_dict:
 			fieldname = field.fieldname
+			
+			# Skip excluded child tables (e.g., Payment References for Payment Entry)
+			# Check case-insensitively
+			if fieldname.lower() in [k.lower() for k in excluded_child_tables]:
+				continue
+			
 			if isinstance(doc_dict[fieldname], list):
 				child_table_data = []
 				for child_dict in doc_dict[fieldname]:
 					if isinstance(child_dict, dict):
-						# Remove internal fields from child table
+						# Remove internal fields from child table and only include fields with values
 						cleaned_child = {}
 						for child_key, child_value in child_dict.items():
-							if child_key not in exclude_fields and not child_key.startswith('_'):
-								# Convert date/datetime/timedelta objects to ISO format strings
-								if isinstance(child_value, (date, datetime)):
-									cleaned_child[child_key] = child_value.isoformat()
-								elif isinstance(child_value, timedelta):
-									# Convert timedelta to HH:MM:SS format (Frappe time format)
-									total_seconds = int(child_value.total_seconds())
-									hours = total_seconds // 3600
-									minutes = (total_seconds % 3600) // 60
-									seconds = total_seconds % 60
-									cleaned_child[child_key] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-								else:
-									cleaned_child[child_key] = child_value
-						# Add doctype for child table
-						cleaned_child['doctype'] = field.options
-						child_table_data.append(cleaned_child)
-				doc_dict[fieldname] = child_table_data
+							# Skip internal fields
+							if child_key in exclude_fields or child_key.startswith('_'):
+								continue
+							
+							# Skip empty values
+							if is_empty_value(child_value):
+								continue
+							
+							# Convert date/datetime/timedelta objects to JSON-serializable format
+							# This handles nested structures (lists, dicts) that may contain datetime objects
+							cleaned_child[child_key] = convert_datetime_value(child_value)
+						
+						# Only add child row if it has at least one field (besides doctype)
+						if cleaned_child:
+							# Add doctype for child table
+							cleaned_child['doctype'] = field.options
+							child_table_data.append(cleaned_child)
+				
+				# Only include child table if it has rows
+				if child_table_data:
+					cleaned_dict[fieldname] = child_table_data
 	
-	return doc_dict
+	return cleaned_dict
 
 
 def create_minimal_master_document(doctype: str, name: str) -> Optional["Document"]:

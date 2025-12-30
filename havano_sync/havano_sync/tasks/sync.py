@@ -141,10 +141,15 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 						# For Company doctype, only sync the specified company
 						filters["name"] = company
 				
-				# Get documents with sync_status = 'Pending' or empty/NULL using SQL
+				# Get documents with sync_status = 'Pending', 'Failed', or empty/NULL using SQL
+				# Include 'Failed' status to retry failed syncs
 				if should_sync_doctype(doctype_name, settings, direction="send") and frappe.db.has_column(doctype_name, 'sync_status'):
-					# Use SQL to directly query documents with Pending or empty sync_status
-					base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending')"]
+					# Use SQL to directly query documents with Pending, Failed, or empty sync_status
+					base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending' OR sync_status = 'Failed')"]
+					
+					# Only sync documents with sync_type = 'Local' (skip Remote documents)
+					if frappe.db.has_column(doctype_name, 'sync_type'):
+						base_conditions.append("(sync_type IS NULL OR sync_type = '' OR sync_type = 'Local')")
 					
 					# For submittable doctypes, only sync submitted documents
 					if is_submittable_doctype(doctype_name):
@@ -239,10 +244,15 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 			# For submittable doctypes, only sync submitted documents (docstatus = 1)
 			company = getattr(settings, 'company', None)
 			
-			# Build SQL query to get documents with Pending or empty sync_status
+			# Build SQL query to get documents with Pending, Failed, or empty sync_status
+			# Include 'Failed' status to retry failed syncs
 			if should_sync_doctype(doctype_name, settings, direction="send") and frappe.db.has_column(doctype_name, 'sync_status'):
-				# Use SQL to directly query documents with Pending or empty sync_status
-				base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending')"]
+				# Use SQL to directly query documents with Pending, Failed, or empty sync_status
+				base_conditions = ["(sync_status IS NULL OR sync_status = '' OR sync_status = 'Pending' OR sync_status = 'Failed')"]
+				
+				# Only sync documents with sync_type = 'Local' (skip Remote documents)
+				if frappe.db.has_column(doctype_name, 'sync_type'):
+					base_conditions.append("(sync_type IS NULL OR sync_type = '' OR sync_type = 'Local')")
 				
 				# For submittable doctypes, only sync submitted documents
 				if is_submittable_doctype(doctype_name):
@@ -353,6 +363,9 @@ def sync_all_pending_documents(doctype: Optional[str] = None):
 							# Track successful doctypes for fetch trigger
 							if result.get("doctype"):
 								successful_doctypes.add(result.get("doctype"))
+						elif result.get("status") == "skipped":
+							# Don't count skipped as errors - they're just skipped
+							pass
 						else:
 							results["errors"].append(result)
 							# Log errors (but less verbose for batch processing)
