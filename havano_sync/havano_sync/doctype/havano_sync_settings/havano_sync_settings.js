@@ -376,39 +376,42 @@ frappe.ui.form.on("Havano Sync Settings", {
 			// Save form first if there are changes (required for password field)
 			const fetchDocuments = function() {
 				frappe.confirm(
-					__("This will fetch all documents from remote server for doctypes with 'Fetch from Remote' enabled. Documents that already exist locally will be skipped. Continue?"),
+					__("This will queue separate fetch operations for each doctype with 'Fetch from Remote' enabled. Documents that already exist locally will be skipped. Continue?"),
 					function() {
 						// Yes
+						frappe.show_alert({
+							message: __("Queueing fetch operations for each doctype..."),
+							indicator: "blue"
+						}, 3);
+						
 						frappe.call({
-							method: "havano_sync.havano_sync.api.sync.trigger_fetch_all",
-							freeze: true,
-							freeze_message: __("Fetching documents from remote server..."),
+							method: "havano_sync.havano_sync.api.sync.trigger_fetch_all_separate_queues",
 							callback: function(r) {
 								if (r.message) {
-									if (r.message.status === "completed" || r.message.status === "success") {
-										const results = r.message.results || {};
-										const success_count = results.success ? results.success.length : 0;
-										const skipped_count = results.skipped ? results.skipped.length : 0;
-										const error_count = results.errors ? results.errors.length : 0;
+									if (r.message.status === "success") {
+										const queued_count = r.message.queued_count || 0;
+										const queued_doctypes = r.message.queued_doctypes || [];
 										
-										let message = __("Fetch completed!");
-										if (success_count > 0) {
-											message += ` ${success_count} document(s) fetched.`;
-										}
-										if (skipped_count > 0) {
-											message += ` ${skipped_count} document(s) skipped (already exist locally).`;
-										}
-										if (error_count > 0) {
-											message += ` ${error_count} error(s) occurred.`;
+										let message = __("Fetch operations queued!");
+										if (queued_count > 0) {
+											message += ` ${queued_count} doctype(s) queued for fetching.`;
+											if (queued_doctypes.length > 0) {
+												message += ` (${queued_doctypes.join(", ")})`;
+											}
 										}
 										
 										frappe.show_alert({
 											message: message,
-											indicator: error_count > 0 ? "orange" : "green"
+											indicator: "green"
 										}, 8);
+									} else if (r.message.status === "skipped") {
+										frappe.show_alert({
+											message: r.message.message || __("No doctypes to fetch."),
+											indicator: "orange"
+										}, 5);
 									} else {
 										frappe.show_alert({
-											message: r.message.message || __("Failed to fetch documents from remote server."),
+											message: r.message.message || __("Failed to queue fetch operations."),
 											indicator: "red"
 										}, 5);
 									}
@@ -417,7 +420,7 @@ frappe.ui.form.on("Havano Sync Settings", {
 							error: function(r) {
 								const error_msg = r.message && r.message.message 
 									? r.message.message 
-									: __("Failed to fetch documents from remote server.");
+									: __("Failed to queue fetch operations.");
 								frappe.show_alert({
 									message: error_msg,
 									indicator: "red"
@@ -460,6 +463,134 @@ frappe.ui.form.on("Havano Sync Settings", {
 					}, 5);
 				}
 			});
+		}, __("Actions"));
+
+		// Fetch Single DocType button
+		frm.add_custom_button(__("Fetch Single DocType"), function() {
+			// Validate required fields first
+			if (!frm.doc.admin_api_key || !frm.doc.admin_api_secret) {
+				frappe.show_alert({
+					message: __("Please configure Admin API Key and Admin API Secret before fetching."),
+					indicator: "orange"
+				}, 5);
+				return;
+			}
+
+			if (!frm.doc.remote_url) {
+				frappe.show_alert({
+					message: __("Please configure Remote Server URL before fetching."),
+					indicator: "orange"
+				}, 5);
+				return;
+			}
+
+			// Get list of syncable doctypes with fetch enabled
+			let fetch_enabled_doctypes = [];
+			if (frm.doc.syncable_doctypes) {
+				for (let syncable of frm.doc.syncable_doctypes) {
+					if (syncable.fetch) {
+						let doctype_name = syncable.doctypes;
+						// Remove -Local suffix if present
+						if (doctype_name && doctype_name.endsWith("-Local")) {
+							doctype_name = doctype_name.slice(0, -6);
+						}
+						if (doctype_name) {
+							fetch_enabled_doctypes.push(doctype_name);
+						}
+					}
+				}
+			}
+
+			if (fetch_enabled_doctypes.length === 0) {
+				frappe.show_alert({
+					message: __("Please enable 'Fetch from Remote' for at least one doctype before fetching."),
+					indicator: "orange"
+				}, 5);
+				return;
+			}
+
+			// Create modal dialog to select doctype
+			const dialog = new frappe.ui.Dialog({
+				title: __("Select DocType to Fetch"),
+				fields: [
+					{
+						label: __("DocType"),
+						fieldname: "doctype",
+						fieldtype: "Select",
+						options: fetch_enabled_doctypes.join("\n"),
+						reqd: 1
+					}
+				],
+				primary_action_label: __("Fetch"),
+				primary_action: function(values) {
+					dialog.hide();
+					const selected_doctype = values.doctype;
+
+					if (!selected_doctype) {
+						frappe.show_alert({
+							message: __("Please select a doctype."),
+							indicator: "orange"
+						}, 5);
+						return;
+					}
+
+					// Save form first if there are changes (required for password field)
+					const fetchSingleDoctype = function() {
+						frappe.show_alert({
+							message: __("Queueing fetch operation for {0}...", [selected_doctype]),
+							indicator: "blue"
+						}, 3);
+
+						frappe.call({
+							method: "havano_sync.havano_sync.api.sync.trigger_fetch_single_doctype_queue",
+							args: {
+								doctype: selected_doctype
+							},
+							callback: function(r) {
+								if (r.message) {
+									if (r.message.status === "success") {
+										frappe.show_alert({
+											message: r.message.message || __("Fetch operation queued for {0}!", [selected_doctype]),
+											indicator: "green"
+										}, 8);
+									} else if (r.message.status === "skipped") {
+										frappe.show_alert({
+											message: r.message.message || __("Fetch skipped for {0}.", [selected_doctype]),
+											indicator: "orange"
+										}, 5);
+									} else {
+										frappe.show_alert({
+											message: r.message.message || __("Failed to queue fetch for {0}.", [selected_doctype]),
+											indicator: "red"
+										}, 5);
+									}
+								}
+							},
+							error: function(r) {
+								const error_msg = r.message && r.message.message 
+									? r.message.message 
+									: __("Failed to queue fetch for {0}.", [selected_doctype]);
+								frappe.show_alert({
+									message: error_msg,
+									indicator: "red"
+								}, 5);
+							}
+						});
+					};
+
+					if (frm.is_dirty()) {
+						frm.save().then(function() {
+							fetchSingleDoctype();
+						}).catch(function(err) {
+							fetchSingleDoctype();
+						});
+					} else {
+						fetchSingleDoctype();
+					}
+				}
+			});
+
+			dialog.show();
 		}, __("Actions"));
 
 		// // Add Fix Renamed DocTypes button

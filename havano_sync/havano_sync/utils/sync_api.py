@@ -572,6 +572,53 @@ class SyncAPI:
 			# Other errors - document might exist but there's a connection/auth issue
 			return False
 	
+	def get_resource_list(self, doctype: str, filters: Optional[Dict[str, Any]] = None, limit_page_length: int = 1000) -> List[Dict[str, Any]]:
+		"""
+		Get list of documents using Frappe's /api/resource endpoint
+		This endpoint bypasses parent permission checks
+		
+		Args:
+			doctype: Document type
+			filters: Optional filters dict (e.g., {"docstatus": 1} or {"name": "Company Name"})
+			limit_page_length: Maximum number of documents to return
+		
+		Returns:
+			List of document dictionaries
+		"""
+		url = f"{self.base_url}/api/resource/{doctype}"
+		headers = self._get_headers()
+		params = {
+			"limit_page_length": limit_page_length
+		}
+		
+		# Add filters if provided - /api/resource expects filters as JSON string
+		if filters:
+			params["filters"] = json.dumps(filters)
+		
+		try:
+			response = self.session.get(url, headers=headers, params=params, timeout=30)
+			response.raise_for_status()
+			result = response.json()
+			
+			# /api/resource returns data in 'data' key
+			if isinstance(result, dict) and 'data' in result:
+				return result['data']
+			elif isinstance(result, list):
+				return result
+			else:
+				return []
+		except requests.exceptions.HTTPError as e:
+			# Re-raise with more context
+			error_msg = str(e)
+			if e.response:
+				try:
+					error_response = e.response.json()
+					if 'exc' in error_response:
+						error_msg = f"{error_msg}\nRemote error: {error_response['exc']}"
+				except:
+					pass
+			raise requests.exceptions.HTTPError(error_msg, response=e.response)
+	
 	def find_document_by_sync_reference(self, doctype: str, sync_reference: str, sync_type: str = "Local") -> Optional[str]:
 		"""
 		Find a document on the remote instance by sync_reference field.

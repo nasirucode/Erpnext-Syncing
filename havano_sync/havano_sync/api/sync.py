@@ -322,6 +322,182 @@ def trigger_fetch_all(doctype: str = None):
 
 
 @frappe.whitelist()
+def trigger_fetch_single_doctype_queue(doctype: str):
+	"""
+	API endpoint to manually trigger fetch for a single doctype from remote
+	Creates a queue job for the specified doctype
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_single_doctype_queue
+		Body: {"doctype": "Customer"}
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.utils import get_syncable_doctypes, should_sync_doctype
+		from frappe.utils import cint
+		
+		if not doctype:
+			return {
+				"status": "error",
+				"message": "doctype parameter is required"
+			}
+		
+		settings = get_sync_settings()
+		
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return {
+				"status": "error",
+				"message": "Havano Sync Settings not properly configured"
+			}
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return {
+				"status": "skipped",
+				"message": "Sync is disabled in settings"
+			}
+		
+		# Check if doctype has fetch enabled
+		syncable_doctypes = get_syncable_doctypes(settings)
+		fetch_enabled = False
+		
+		for syncable in syncable_doctypes:
+			syncable_doctype_name = syncable.doctypes
+			# Remove -Local suffix if present
+			if syncable_doctype_name and syncable_doctype_name.endswith("-Local"):
+				syncable_doctype_name = syncable_doctype_name[:-6]
+			
+			if syncable_doctype_name == doctype:
+				fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+				break
+		
+		if not fetch_enabled:
+			return {
+				"status": "error",
+				"message": f"DocType '{doctype}' is not configured for fetching or 'Fetch from Remote' is not enabled"
+			}
+		
+		# Queue the fetch operation
+		try:
+			frappe.enqueue(
+				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+				doctype=doctype,
+				queue="default",
+				timeout=600,  # 10 minutes timeout
+				is_async=True,
+				job_name=f"fetch_from_remote_{doctype}"
+			)
+			return {
+				"status": "success",
+				"message": f"Queued fetch operation for {doctype}",
+				"doctype": doctype
+			}
+		except Exception as e:
+			frappe.log_error(
+				title=f"Failed to queue fetch for {doctype}",
+				message=f"Error queueing fetch for {doctype}: {str(e)}\n{frappe.get_traceback()}"
+			)
+			return {
+				"status": "error",
+				"message": f"Failed to queue fetch operation: {str(e)}"
+			}
+	except Exception as e:
+		frappe.log_error(
+			title="Trigger Fetch Single DocType Queue Failed",
+			message=f"Error triggering fetch for {doctype}: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to trigger fetch: {str(e)}"
+		}
+
+
+@frappe.whitelist()
+def trigger_fetch_all_separate_queues():
+	"""
+	API endpoint to manually trigger fetch for all documents from remote
+	Creates a separate queue job for each syncable doctype with fetch enabled
+	
+	Usage:
+		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_all_separate_queues
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.utils import get_syncable_doctypes
+		from frappe.utils import cint
+		
+		settings = get_sync_settings()
+		
+		if not settings.admin_api_key or not settings.admin_api_secret or not settings.remote_url:
+			return {
+				"status": "error",
+				"message": "Havano Sync Settings not properly configured"
+			}
+		
+		# Check if sync is enabled
+		if not settings.enable_sync:
+			return {
+				"status": "skipped",
+				"message": "Sync is disabled in settings"
+			}
+		
+		# Get syncable doctypes with fetch enabled
+		syncable_doctypes = get_syncable_doctypes(settings)
+		fetch_enabled_doctypes = []
+		
+		for syncable in syncable_doctypes:
+			doctype_name = syncable.doctypes
+			# Remove -Local suffix if present
+			if doctype_name and doctype_name.endswith("-Local"):
+				doctype_name = doctype_name[:-6]
+			
+			# Check if fetch is enabled for this doctype
+			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
+			
+			if fetch_enabled and doctype_name:
+				fetch_enabled_doctypes.append(doctype_name)
+		
+		if not fetch_enabled_doctypes:
+			return {
+				"status": "skipped",
+				"message": "No doctypes with 'Fetch from Remote' enabled found"
+			}
+		
+		# Queue a separate fetch operation for each doctype
+		queued_count = 0
+		for doctype_name in fetch_enabled_doctypes:
+			try:
+				frappe.enqueue(
+					"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
+					doctype=doctype_name,
+					queue="short",
+					timeout=300,  # 10 minutes timeout per doctype
+					is_async=True,
+					job_name=f"fetch_from_remote_{doctype_name}"
+				)
+				queued_count += 1
+			except Exception as e:
+				frappe.log_error(
+					title=f"Failed to queue fetch for {doctype_name}",
+					message=f"Error queueing fetch for {doctype_name}: {str(e)}\n{frappe.get_traceback()}"
+				)
+		
+		return {
+			"status": "success",
+			"message": f"Queued fetch operations for {queued_count} doctype(s)",
+			"queued_doctypes": fetch_enabled_doctypes,
+			"queued_count": queued_count
+		}
+	except Exception as e:
+		frappe.log_error(
+			title="Trigger Fetch All Separate Queues Failed",
+			message=f"Error triggering fetch with separate queues: {str(e)}\n{frappe.get_traceback()}"
+		)
+		return {
+			"status": "error",
+			"message": f"Failed to trigger fetch: {str(e)}"
+		}
+
+
+@frappe.whitelist()
 def get_installed_apps_info():
 	"""
 	API endpoint to get installed apps information (similar to show_about())
@@ -448,6 +624,47 @@ def trigger_fetch_item_prices_and_exchange_rates():
 		POST /api/method/havano_sync.havano_sync.api.sync.trigger_fetch_item_prices_and_exchange_rates
 	"""
 	return fetch_item_prices_and_exchange_rates()
+
+
+@frappe.whitelist()
+def get_document_list(doctype: str, filters: dict = None, limit_page_length: int = 1000):
+	"""
+	Custom API endpoint to get list of documents with ignore_permissions
+	This bypasses parent permission checks that frappe.client.get_list requires
+	
+	Usage:
+		GET /api/method/havano_sync.havano_sync.api.sync.get_document_list?doctype=Customer&limit_page_length=1000
+	"""
+	if not doctype:
+		frappe.throw("doctype parameter is required")
+	
+	# Build filters
+	filter_dict = {}
+	if filters:
+		if isinstance(filters, str):
+			import json
+			try:
+				filter_dict = json.loads(filters)
+			except json.JSONDecodeError:
+				frappe.throw(f"Invalid filters JSON: {filters}")
+		elif isinstance(filters, dict):
+			filter_dict = filters
+	
+	# Get documents with ignore_permissions=True to bypass parent permission checks
+	try:
+		docs = frappe.get_list(
+			doctype,
+			filters=filter_dict,
+			limit_page_length=limit_page_length,
+			ignore_permissions=True
+		)
+		return docs
+	except Exception as e:
+		frappe.log_error(
+			title="Get Document List Failed",
+			message=f"Error getting document list for {doctype}: {str(e)}\n{frappe.get_traceback()}"
+		)
+		frappe.throw(f"Failed to get document list for {doctype}: {str(e)}")
 
 @frappe.whitelist()
 def trigger_fetch_items_and_item_prices():

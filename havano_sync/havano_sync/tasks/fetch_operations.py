@@ -185,14 +185,12 @@ def cleanup_item_prices_not_on_remote():
 		# Initialize API client
 		api_client = SyncAPI(settings.remote_url, settings.admin_api_key, api_secret)
 		
-		# Get all Item Prices from remote
-		endpoint = "frappe.client.get_list"
-		params = {
-			"doctype": "Item Price",
-			"limit_page_length": 10000  # Get all Item Prices
-		}
-		
-		remote_docs = api_client._make_request("GET", endpoint, params=params)
+		# Get all Item Prices from remote using /api/resource endpoint
+		remote_docs = api_client.get_resource_list(
+			doctype="Item Price",
+			filters=None,
+			limit_page_length=10000  # Get all Item Prices
+		)
 		
 		if not remote_docs or not isinstance(remote_docs, list):
 			frappe.logger().info("No remote Item Prices found for cleanup")
@@ -1050,20 +1048,16 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 			
 			# Get all documents of this doctype from remote
 			try:
-				# Use frappe.client.get_list to get all documents
-				endpoint = "frappe.client.get_list"
-				params = {
-					"doctype": doctype_name,
-					"limit_page_length": 1000
-				}
+				# Use /api/resource endpoint to get all documents
+				# This endpoint bypasses parent permission checks
 				
 				# For submittable doctypes, only fetch submitted documents (docstatus = 1)
 				filters = {}
 				if is_submittable_doctype(doctype_name):
 					filters["docstatus"] = 1
 				
-				# Note: We don't filter by company here because frappe.client.get_list
-				# has security restrictions on which fields can be used in filters.
+				# Note: We don't filter by company here because some doctypes
+				# have security restrictions on which fields can be used in filters.
 				# Instead, we filter by company after fetching each document (see line 675).
 				# Exception: For Company doctype, we can filter by name
 				company = getattr(settings, 'company', None)
@@ -1071,11 +1065,11 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 					# For Company doctype, only fetch the specified company
 					filters["name"] = company
 				
-				# Apply filters if any
-				if filters:
-					params["filters"] = json.dumps(filters)
-				
-				remote_docs = api_client._make_request("GET", endpoint, params=params)
+				remote_docs = api_client.get_resource_list(
+					doctype=doctype_name,
+					filters=filters if filters else None,
+					limit_page_length=1000
+				)
 				
 				if not remote_docs or not isinstance(remote_docs, list):
 					continue
@@ -1205,73 +1199,73 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 							remote_item_code = remote_doc.get('item_code')
 							remote_price_list = remote_doc.get('price_list')
 							remote_price_list_rate = remote_doc.get('price_list_rate')
-						
-						if remote_item_code and remote_price_list:
-							# Check if local Item Price exists with same item_code and price_list
-							existing_item_price = frappe.db.get_value(
-								doctype_name,
-								{
-									"item_code": remote_item_code,
-									"price_list": remote_price_list
-								},
-								"name"
-							)
 							
-							if existing_item_price:
-								# Document exists - update price_list_rate to match remote
-								try:
-									frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}. Updating price_list_rate to {remote_price_list_rate}.")
-									local_doc = frappe.get_doc(doctype_name, existing_item_price)
-									
-									# Update price_list_rate
-									old_rate = local_doc.price_list_rate
-									local_doc.price_list_rate = remote_price_list_rate
-									
-									# Update sync fields
-									local_doc.sync_type = "Remote"
-									# Check if doctype is syncable or compulsory to set sync_reference
-									auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
-									is_compulsory = doctype_name in auto_sync_doctypes
-									is_syncable = should_sync_doctype(doctype_name, settings, direction="send")
-									if is_compulsory or is_syncable:
-										# For fetched documents, use the remote sync_reference if available
-										# or generate a random one if not
-										remote_sync_ref = remote_doc.get('sync_reference')
-										if remote_sync_ref:
-											local_doc.sync_reference = remote_sync_ref
-										else:
-											# Generate random sync_reference if remote doesn't have one
-											import random
-											import string
-											local_doc.sync_reference = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
-									
-									# Save the updated document
-									local_doc.save(ignore_permissions=True)
-									frappe.db.commit()
-									
-									frappe.logger().info(f"[Item Price Update] Updated price_list_rate from {old_rate} to {remote_price_list_rate} for {doctype_name} {existing_item_price}")
-									
-									# Set sync_status to "Fetched"
+							if remote_item_code and remote_price_list:
+								# Check if local Item Price exists with same item_code and price_list
+								existing_item_price = frappe.db.get_value(
+									doctype_name,
+									{
+										"item_code": remote_item_code,
+										"price_list": remote_price_list
+									},
+									"name"
+								)
+								
+								if existing_item_price:
+									# Document exists - update price_list_rate to match remote
 									try:
-										from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
-										ensure_sync_status_field_exists(doctype_name)
-										if frappe.db.has_column(doctype_name, 'sync_status'):
-											frappe.db.set_value(doctype_name, existing_item_price, 'sync_status', 'Fetched', update_modified=False)
-											frappe.db.commit()
-											frappe.logger().info(f"[Item Price Update] Set sync_status='Fetched' for {doctype_name} {existing_item_price}")
-									except Exception as sync_status_error:
-										frappe.log_error(
-											title="Failed to set sync_status on updated document",
-											message=f"Could not set sync_status='Fetched' on {doctype_name} {existing_item_price}: {str(sync_status_error)}"
-										)
-									
-									results["success"].append({
-										"doctype": doctype_name,
-										"name": existing_item_price,
-										"message": f"Document updated successfully (matched by item_code, price_list). Updated price_list_rate from {old_rate} to {remote_price_list_rate}"
-									})
-									continue
-								except Exception as update_error:
+										frappe.logger().info(f"[Item Price Update] Found existing Item Price {existing_item_price} with item_code={remote_item_code}, price_list={remote_price_list}. Updating price_list_rate to {remote_price_list_rate}.")
+										local_doc = frappe.get_doc(doctype_name, existing_item_price)
+										
+										# Update price_list_rate
+										old_rate = local_doc.price_list_rate
+										local_doc.price_list_rate = remote_price_list_rate
+										
+										# Update sync fields
+										local_doc.sync_type = "Remote"
+										# Check if doctype is syncable or compulsory to set sync_reference
+										auto_sync_doctypes = {"Customer", "Sales Invoice", "Payment Entry", "Sales Order"}
+										is_compulsory = doctype_name in auto_sync_doctypes
+										is_syncable = should_sync_doctype(doctype_name, settings, direction="send")
+										if is_compulsory or is_syncable:
+											# For fetched documents, use the remote sync_reference if available
+											# or generate a random one if not
+											remote_sync_ref = remote_doc.get('sync_reference')
+											if remote_sync_ref:
+												local_doc.sync_reference = remote_sync_ref
+											else:
+												# Generate random sync_reference if remote doesn't have one
+												import random
+												import string
+												local_doc.sync_reference = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+										
+										# Save the updated document
+										local_doc.save(ignore_permissions=True)
+										frappe.db.commit()
+										
+										frappe.logger().info(f"[Item Price Update] Updated price_list_rate from {old_rate} to {remote_price_list_rate} for {doctype_name} {existing_item_price}")
+										
+										# Set sync_status to "Fetched"
+										try:
+											from havano_sync.havano_sync.tasks.utils import ensure_sync_status_field_exists
+											ensure_sync_status_field_exists(doctype_name)
+											if frappe.db.has_column(doctype_name, 'sync_status'):
+												frappe.db.set_value(doctype_name, existing_item_price, 'sync_status', 'Fetched', update_modified=False)
+												frappe.db.commit()
+												frappe.logger().info(f"[Item Price Update] Set sync_status='Fetched' for {doctype_name} {existing_item_price}")
+										except Exception as sync_status_error:
+											frappe.log_error(
+												title="Failed to set sync_status on updated document",
+												message=f"Could not set sync_status='Fetched' on {doctype_name} {existing_item_price}: {str(sync_status_error)}"
+											)
+										
+										results["success"].append({
+											"doctype": doctype_name,
+											"name": existing_item_price,
+											"message": f"Document updated successfully (matched by item_code, price_list). Updated price_list_rate from {old_rate} to {remote_price_list_rate}"
+										})
+										continue
+									except Exception as update_error:
 										frappe.log_error(
 											title=f"Failed to update {doctype_name} {existing_item_price}",
 											message=f"Error updating {doctype_name} {existing_item_price}: {str(update_error)}\n{frappe.get_traceback()}"
@@ -1314,13 +1308,15 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 
 						
 						# Check if document belongs to specified company
+						# Note: Account doctype is typically shared across companies, so we don't filter it by company
 						company = getattr(settings, 'company', None)
-						if company and not belongs_to_company(remote_doc, doctype_name, company):
+						if company and doctype_name != "Account" and not belongs_to_company(remote_doc, doctype_name, company):
 							results["skipped"].append({
 								"doctype": doctype_name,
 								"name": doc_name,
 								"message": f"Document belongs to different company (not {company})"
 							})
+							frappe.logger().info(f"Skipping {doctype_name} {doc_name} - belongs to different company (not {company})")
 							continue
 						
 						# Remove metadata fields that shouldn't be set during creation
@@ -1449,11 +1445,30 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 								"name": doc_name,
 								"message": "Document already exists locally, skipped"
 							})
+						except Exception as insert_error:
+							# Log error when document insert fails
+							frappe.db.rollback()
+							error_msg = str(insert_error)
+							frappe.log_error(
+								title=f"Failed to insert fetched document: {doctype_name} {doc_name}",
+								message=f"Error inserting {doctype_name} {doc_name}: {error_msg}\n{frappe.get_traceback()}"
+							)
+							results["errors"].append({
+								"doctype": doctype_name,
+								"name": doc_name,
+								"message": f"Error inserting document: {error_msg}"
+							})
 					except DocumentNotFoundError:
 						# Document not found on remote - silently skip (may have been deleted)
 						continue
 					except Exception as fetch_error:
 						error_msg = str(fetch_error)
+						# Log all errors, even if we skip them
+						frappe.log_error(
+							title=f"Error fetching document: {doctype_name} {doc_name}",
+							message=f"Error fetching {doctype_name} {doc_name}: {error_msg}\n{frappe.get_traceback()}"
+						)
+						
 						# Silently skip common validation/link errors that shouldn't be shown to user
 						skip_patterns = [
 							"not found",
@@ -1462,11 +1477,11 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						]
 						# Check if error contains "Item X not found" pattern
 						if "Item " in error_msg and " not found" in error_msg:
-							# Silently skip - linked item doesn't exist
+							# Silently skip - linked item doesn't exist (but already logged)
 							continue
 						# Check other skip patterns
 						if any(skip_pattern in error_msg for skip_pattern in skip_patterns):
-							# Silently skip - document may have been deleted or has validation issues
+							# Silently skip - document may have been deleted or has validation issues (but already logged)
 							continue
 						# Only add unexpected errors to results
 						results["errors"].append({
@@ -1476,9 +1491,14 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 						})
 						
 			except Exception as e:
+				error_msg = str(e)
+				frappe.log_error(
+					title=f"Error fetching documents for doctype: {doctype_name}",
+					message=f"Error fetching documents for {doctype_name}: {error_msg}\n{frappe.get_traceback()}"
+				)
 				results["errors"].append({
 					"doctype": doctype_name,
-					"message": f"Error fetching documents: {str(e)}"
+					"message": f"Error fetching documents: {error_msg}"
 				})
 		
 		return {
