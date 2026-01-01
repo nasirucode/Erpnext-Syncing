@@ -591,7 +591,7 @@ frappe.ui.form.on("Havano Sync Settings", {
 			});
 
 			dialog.show();
-		}, __("Actions"));
+		});
 
 		// // Add Fix Renamed DocTypes button
 		// frm.add_custom_button(__("Fix Renamed DocTypes"), function() {
