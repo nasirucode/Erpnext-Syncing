@@ -1041,6 +1041,19 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 				})
 				continue
 			
+			# Skip child tables - they are fetched as part of their parent document
+			try:
+				meta = frappe.get_meta(doctype_name)
+				if meta and meta.istable:
+					results["skipped"].append({
+						"doctype": doctype_name,
+						"message": f"{doctype_name} is a child table and should be fetched as part of its parent document"
+					})
+					continue
+			except Exception:
+				# If we can't get meta, continue (doctype might not exist locally)
+				pass
+			
 			# Check if fetch is enabled
 			fetch_enabled = cint(syncable.get('fetch', 0)) if hasattr(syncable, 'get') else cint(getattr(syncable, 'fetch', 0))
 			if not fetch_enabled:
@@ -1073,6 +1086,31 @@ def fetch_all_documents_from_remote(doctype: Optional[str] = None):
 				
 				if not remote_docs or not isinstance(remote_docs, list):
 					continue
+			except requests.exceptions.HTTPError as http_error:
+				# Handle 403 Forbidden errors - API user doesn't have permission for this doctype
+				if http_error.response and http_error.response.status_code == 403:
+					error_msg = (
+						f"Permission Denied (403 Forbidden) for doctype '{doctype_name}': "
+						f"The API user does not have permission to access this doctype on the remote server.\n\n"
+						f"To fix this issue:\n"
+						f"1. Go to the remote Frappe instance\n"
+						f"2. Navigate to User List and find the user associated with the Admin API Key\n"
+						f"3. Ensure the user has the 'System Manager' role OR has appropriate permissions for '{doctype_name}'\n"
+						f"4. Check the doctype permissions in Settings > Permissions for '{doctype_name}'\n\n"
+						f"Skipping fetch for '{doctype_name}' due to permission error."
+					)
+					frappe.log_error(
+						title=f"Permission Denied: Cannot fetch {doctype_name}",
+						message=error_msg
+					)
+					results["skipped"].append({
+						"doctype": doctype_name,
+						"name": None,
+						"message": f"Permission denied (403): API user does not have access to '{doctype_name}' on remote server"
+					})
+					continue
+				# Re-raise other HTTP errors to be handled by outer exception handler
+				raise
 				
 				# For Item Price, group by item_code and delete local ones not on remote
 				# First, collect all remote Item Prices and group by item_code

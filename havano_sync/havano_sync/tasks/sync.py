@@ -865,11 +865,44 @@ def fetch_items_and_item_prices_cron_job():
 		)
 
 
+def clear_havano_sync_log_cron_job():
+	"""
+	Cron job to clear old Havano Sync Log entries
+	Runs every 4 hours to keep log table size manageable
+	"""
+	try:
+		from frappe.utils import add_days, now_datetime
+		
+		# Clear logs older than 30 days (matching default_log_clearing_doctypes setting)
+		days_to_keep = 0.2
+		cutoff_date = add_days(now_datetime(), -days_to_keep)
+		
+		# Delete old log entries
+		frappe.db.sql("""
+			DELETE FROM `tabHavano Sync Log`
+			WHERE creation < %s
+		""", (cutoff_date,))
+
+		frappe.db.sql("""
+			DELETE FROM `tabError Log`
+			WHERE creation < %s
+		""", (cutoff_date,))
+
+		frappe.db.commit()
+		
+		frappe.logger().info(f"Cleared Havano Sync Log and Error Log entries older than {days_to_keep} days")
+	except Exception as e:
+		frappe.log_error(
+			title="Clear Havano Sync Log Cron Job Failed",
+			message=f"Error clearing Havano Sync Log: {str(e)}\n{frappe.get_traceback()}"
+		)
+
+
 def trigger_fetch_on_login(login_manager=None):
 	"""
-	Trigger fetch cron job when user logs in
+	Trigger fetch when user logs in
 	This runs in background to avoid blocking login
-	Fetches multiple doctypes in parallel for faster execution
+	Fetches doctypes sequentially one after another in the order of syncable doctype
 	
 	Args:
 		login_manager: LoginManager instance passed by Frappe's on_login hook
@@ -885,8 +918,8 @@ def trigger_fetch_on_login(login_manager=None):
 		# Get syncable doctypes with fetch enabled
 		syncable_doctypes = get_syncable_doctypes(settings)
 		
-		# Fetch each doctype in parallel for faster execution
-		# This allows multiple doctypes to be fetched simultaneously
+		# Collect doctypes to fetch in order
+		doctypes_to_fetch = []
 		for syncable in syncable_doctypes:
 			doctype_name = syncable.doctypes
 			
@@ -903,23 +936,54 @@ def trigger_fetch_on_login(login_manager=None):
 			if not fetch_enabled:
 				continue
 			
-			# For Item and Item Price, use default queue for faster processing
-			# For other doctypes, use short queue
-			immediate_fetch_doctypes = {"Item", "Item Price"}
-			queue_name = "default" if doctype_name in immediate_fetch_doctypes else "short"
-			
-			# Enqueue each doctype fetch in parallel
-			frappe.enqueue(
-				"havano_sync.havano_sync.tasks.fetch_operations.fetch_all_documents_from_remote",
-				doctype=doctype_name,
-				queue=queue_name,  # Use default queue for Item/Item Price, short for others
-				timeout=300,  # 5 minutes timeout per doctype
-				is_async=True,
-				job_name=f"fetch_on_login_{doctype_name}"
-			)
+			doctypes_to_fetch.append(doctype_name)
+		
+		if not doctypes_to_fetch:
+			return
+		
+		# Enqueue a single sequential fetch job that processes all doctypes one after another
+		frappe.enqueue(
+			"havano_sync.havano_sync.tasks.sync._fetch_doctypes_sequentially_on_login",
+			doctypes=doctypes_to_fetch,
+			queue="short",
+			timeout=1800,  # 1 hour timeout for all doctypes
+			is_async=True,
+			job_name="fetch_on_login_sequential"
+		)
 	except Exception as e:
 		# Silently fail - don't block login if fetch fails
 		frappe.log_error(
 			"Failed to trigger fetch on login",
 			f"Error triggering fetch on login: {str(e)}\n{frappe.get_traceback()}"
+		)
+
+
+def _fetch_doctypes_sequentially_on_login(doctypes):
+	"""
+	Internal function to fetch doctypes sequentially one after another
+	This function is called from trigger_fetch_on_login
+	
+	Args:
+		doctypes: List of doctype names to fetch in order
+	"""
+	try:
+		from havano_sync.havano_sync.tasks.fetch_operations import fetch_all_documents_from_remote
+		
+		for doctype_name in doctypes:
+			try:
+				frappe.logger().info(f"Fetching {doctype_name} on login (sequential)")
+				# Fetch synchronously to ensure sequential execution
+				fetch_all_documents_from_remote(doctype=doctype_name)
+				frappe.db.commit()
+			except Exception as e:
+				# Log error but continue with next doctype
+				frappe.log_error(
+					title=f"Failed to fetch {doctype_name} on login",
+					message=f"Error fetching {doctype_name} on login: {str(e)}\n{frappe.get_traceback()}"
+				)
+				frappe.db.rollback()
+	except Exception as e:
+		frappe.log_error(
+			title="Sequential Fetch on Login Failed",
+			message=f"Error in sequential fetch on login: {str(e)}\n{frappe.get_traceback()}"
 		)
