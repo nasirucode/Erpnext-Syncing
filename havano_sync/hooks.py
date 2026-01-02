@@ -186,6 +186,9 @@ scheduler_events = {
 		],
 		"*/2 * * * *": [
 			"havano_sync.havano_sync.tasks.sync.fetch_items_and_item_prices_cron_job"
+		],
+		"0 */4 * * *": [
+			"havano_sync.havano_sync.tasks.sync.clear_havano_sync_log_cron_job"
 		]
 	}
 }

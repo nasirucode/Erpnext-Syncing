@@ -793,6 +793,27 @@ def fetch_item_prices_and_exchange_rates():
 		}
 
 
+def clear_havano_sync_log_cron_job():
+	"""
+	Cron job to clear all Havano Sync Log entries
+	Runs every 4 hours to keep log table size manageable
+	"""
+	try:
+		# Delete all log entries
+		frappe.db.sql("""
+			DELETE FROM `tabHavano Sync Log`
+		""")
+		
+		frappe.db.commit()
+		
+		frappe.logger().info("Cleared all Havano Sync Log entries")
+	except Exception as e:
+		frappe.log_error(
+			title="Clear Havano Sync Log Cron Job Failed",
+			message=f"Error clearing Havano Sync Log: {str(e)}\n{frappe.get_traceback()}"
+		)
+
+
 def fetch_items_and_item_prices_cron_job():
 	"""
 	Cron job to fetch Item and Item Price from remote every 2 minutes
